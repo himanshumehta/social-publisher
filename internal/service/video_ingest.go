@@ -351,7 +351,7 @@ func (s *VideoIngestService) createRecords(
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO videos (id, project_id, uploaded_by, format, version, storage_key, storage_type,
 			file_name, file_size_bytes, mime_type, thumbnail_key, status)
-		VALUES ($1, $2, $3, 'raw', 1, $4, 's3', 'video.mp4', $5, $6, $7, 'ready')`,
+		VALUES ($1, $2, $3, 'raw', 1, $4, 'spaces', 'video.mp4', $5, $6, $7, 'ready')`,
 		videoID, projectID, ownerID, videoKey, req.Video.Size, req.Video.ContentType, thumb,
 	); err != nil {
 		return "", fmt.Errorf("insert video: %w", err)

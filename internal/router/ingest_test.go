@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,6 +72,10 @@ type ingestFixture struct {
 	readKey string // API key with posts:read only
 	tmp     string // TMPDIR for spooled uploads
 }
+
+// ingestClientN gives each request its own client address, so the per-IP
+// rate limiter does not interfere.
+var ingestClientN atomic.Int64
 
 // maxTestVideo keeps oversize tests small.
 const maxTestVideo = 64 << 10
@@ -191,8 +196,8 @@ func (f *ingestFixture) post(t *testing.T, apiKey, idemKey string, meta map[stri
 	if idemKey != "" {
 		r.Header.Set("Idempotency-Key", idemKey)
 	}
-	clientN++
-	r.RemoteAddr = fmt.Sprintf("10.9.%d.%d:1234", clientN/250, clientN%250+1)
+	n := ingestClientN.Add(1) // concurrent callers: keep the counter race-free
+	r.RemoteAddr = fmt.Sprintf("10.9.%d.%d:1234", n/250, n%250+1)
 	w := httptest.NewRecorder()
 	f.h.ServeHTTP(w, r)
 	var out map[string]any
