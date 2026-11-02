@@ -41,6 +41,12 @@ func userIDFromRequest(r *http.Request) (uuid.UUID, bool) {
 	return middleware.UserIDFromContext(r.Context())
 }
 
+// isAdminRequest reports whether the authenticated caller has an admin role.
+func isAdminRequest(r *http.Request) bool {
+	role := middleware.RoleFromContext(r.Context())
+	return role == "admin" || role == "super_admin"
+}
+
 // requireUserID extracts the authenticated user ID from the request context.
 // Returns false (and writes a 401 response) if the user is not authenticated.
 func (h *Handler) requireUserID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

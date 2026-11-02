@@ -625,14 +625,23 @@ func (s *PostService) CompleteSystemReview(ctx context.Context, postID uuid.UUID
 	return err
 }
 
-// AdminApprove approves a post for publishing.
-func (s *PostService) AdminApprove(ctx context.Context, postID uuid.UUID) error {
+// AdminApprove approves a post for publishing. With a non-nil scheduledAt the
+// post is approved straight into the scheduled state in the same statement, so
+// the publish loop cannot pick it up before the schedule is recorded.
+func (s *PostService) AdminApprove(ctx context.Context, postID uuid.UUID, scheduledAt *time.Time) error {
+	if scheduledAt != nil && !scheduledAt.After(time.Now()) {
+		return fmt.Errorf("scheduled_at must be in the future")
+	}
 	result, err := s.pool.Exec(ctx, `
 		UPDATE posts
-		SET status = 'approved'::post_status,
+		SET status = CASE WHEN $2::timestamptz IS NULL THEN 'approved'::post_status
+		                  ELSE 'scheduled'::post_status END,
+			scheduled_at = COALESCE($2::timestamptz, scheduled_at),
+			pre_schedule_status = CASE WHEN $2::timestamptz IS NULL THEN pre_schedule_status
+		                               ELSE 'approved' END,
 			updated_at = NOW()
 		WHERE id = $1 AND status IN ('pending_review', 'flagged')`,
-		postID,
+		postID, scheduledAt,
 	)
 	if err != nil {
 		return err
@@ -680,8 +689,9 @@ func (s *PostService) Submit(ctx context.Context, postID, authorID uuid.UUID) er
 	return nil
 }
 
-// Regenerate re-triggers AI content generation for a post.
-func (s *PostService) Regenerate(ctx context.Context, postID uuid.UUID) error {
+// Regenerate re-triggers AI content generation for a post. Non-admins may
+// only regenerate their own posts.
+func (s *PostService) Regenerate(ctx context.Context, postID, requesterID uuid.UUID, isAdmin bool) error {
 	result, err := s.pool.Exec(ctx, `
 		UPDATE posts
 		SET status = 'scanned'::post_status,
@@ -689,8 +699,9 @@ func (s *PostService) Regenerate(ctx context.Context, postID uuid.UUID) error {
 			ai_generated_at = NULL,
 			processing_started_at = NULL,
 			updated_at = NOW()
-		WHERE id = $1 AND status IN ('generated', 'pending_review', 'flagged', 'generation_failed')`,
-		postID,
+		WHERE id = $1 AND ($2 OR author_id = $3)
+		  AND status IN ('generated', 'pending_review', 'flagged', 'generation_failed')`,
+		postID, isAdmin, requesterID,
 	)
 	if err != nil {
 		return err

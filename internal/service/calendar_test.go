@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/model"
 )
@@ -63,8 +64,17 @@ func createSchedulablePost(t *testing.T, status string) (context.Context, *Calen
 	return ctx, calSvc, postSvc, userID, post.ID, cleanup
 }
 
+// markApproved simulates a post that has passed admin review.
+func markApproved(t *testing.T, pool *pgxpool.Pool, postID uuid.UUID) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE posts SET status = 'approved'::post_status WHERE id = $1`, postID); err != nil {
+		t.Fatalf("approve post: %v", err)
+	}
+}
+
 func TestSchedulePost_Success(t *testing.T) {
-	ctx, calSvc, postSvc, userID, postID, cleanup := createSchedulablePost(t, "draft")
+	ctx, calSvc, postSvc, userID, postID, cleanup := createSchedulablePost(t, "approved")
 	defer cleanup()
 
 	futureTime := time.Now().UTC().Add(24 * time.Hour)
@@ -104,7 +114,7 @@ func TestSchedulePost_InvalidStatus(t *testing.T) {
 }
 
 func TestSchedulePost_PastTime(t *testing.T) {
-	ctx, calSvc, _, userID, postID, cleanup := createSchedulablePost(t, "draft")
+	ctx, calSvc, _, userID, postID, cleanup := createSchedulablePost(t, "approved")
 	defer cleanup()
 
 	pastTime := time.Now().UTC().Add(-1 * time.Hour)
@@ -116,7 +126,7 @@ func TestSchedulePost_PastTime(t *testing.T) {
 }
 
 func TestSchedulePost_WrongUser(t *testing.T) {
-	ctx, calSvc, _, _, postID, cleanup := createSchedulablePost(t, "draft")
+	ctx, calSvc, _, _, postID, cleanup := createSchedulablePost(t, "approved")
 	defer cleanup()
 
 	otherUser := uuid.New()
@@ -160,7 +170,7 @@ func TestUnschedulePost_Success(t *testing.T) {
 }
 
 func TestUnschedulePost_NotScheduled(t *testing.T) {
-	ctx, calSvc, _, userID, postID, cleanup := createSchedulablePost(t, "draft")
+	ctx, calSvc, _, userID, postID, cleanup := createSchedulablePost(t, "approved")
 	defer cleanup()
 
 	err := calSvc.UnschedulePost(ctx, userID, postID)
@@ -202,6 +212,7 @@ func TestBulkSchedule_AllSuccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create post %d failed: %v", i, err)
 		}
+		markApproved(t, pool, post.ID)
 		postIDs = append(postIDs, post.ID)
 	}
 
@@ -262,6 +273,7 @@ func TestBulkSchedule_PartialFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create post1 failed: %v", err)
 	}
+	markApproved(t, pool, post1.ID)
 
 	req2 := &model.CreatePostRequest{
 		SourceURL:       fmt.Sprintf("https://example.com/bulk-fail-%s", uuid.New().String()),
@@ -341,6 +353,7 @@ func TestGetCalendar_DateRange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create post %d failed: %v", i, err)
 		}
+		markApproved(t, pool, post.ID)
 		err = calSvc.SchedulePost(ctx, userID, post.ID, scheduledAt, "UTC")
 		if err != nil {
 			t.Fatalf("SchedulePost %d failed: %v", i, err)

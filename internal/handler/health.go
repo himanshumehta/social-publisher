@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,17 +27,24 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 
 	// Check DB (critical)
 	if err := h.pool.Ping(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("db: %v", err))
+		slog.Warn("readiness: database ping failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
 	result["database"] = "ok"
 
 	// Check Redis (non-critical)
 	if err := h.rdb.Ping(ctx).Err(); err != nil {
-		result["redis"] = fmt.Sprintf("degraded: %v", err)
+		slog.Warn("readiness: redis ping failed", "error", err)
+		result["redis"] = "degraded"
 	} else {
 		result["redis"] = "ok"
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// Health is the liveness probe: it answers as long as the process serves HTTP.
+func Health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

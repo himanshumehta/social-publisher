@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/himanshumehta/social-publisher/internal/middleware"
 	"github.com/himanshumehta/social-publisher/internal/model"
 )
 
@@ -42,8 +41,7 @@ func (h *Handler) GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := middleware.RoleFromContext(r.Context())
-	isAdmin := role == "admin" || role == "super_admin"
+	isAdmin := isAdminRequest(r)
 
 	post, err := h.services.Post.GetByID(r.Context(), postID, userID, isAdmin)
 	if err != nil {
@@ -61,8 +59,7 @@ func (h *Handler) ListPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := middleware.RoleFromContext(r.Context())
-	isAdmin := role == "admin" || role == "super_admin"
+	isAdmin := isAdminRequest(r)
 
 	page := 1
 	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 0 {
@@ -115,8 +112,7 @@ func (h *Handler) UpdatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := middleware.RoleFromContext(r.Context())
-	isAdmin := role == "admin" || role == "super_admin"
+	isAdmin := isAdminRequest(r)
 
 	post, err := h.services.Post.Update(r.Context(), postID, userID, isAdmin, &req)
 	if err != nil {
@@ -139,8 +135,7 @@ func (h *Handler) DeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := middleware.RoleFromContext(r.Context())
-	isAdmin := role == "admin" || role == "super_admin"
+	isAdmin := isAdminRequest(r)
 
 	if err := h.services.Post.Delete(r.Context(), postID, userID, isAdmin); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -152,12 +147,16 @@ func (h *Handler) DeletePost(w http.ResponseWriter, r *http.Request) {
 
 // RegeneratePost handles POST /api/v1/posts/{id}/regenerate
 func (h *Handler) RegeneratePost(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUserID(w, r)
+	if !ok {
+		return
+	}
 	postID, ok := h.requirePathUUID(w, r, "id", "post ID")
 	if !ok {
 		return
 	}
 
-	if err := h.services.Post.Regenerate(r.Context(), postID); err != nil {
+	if err := h.services.Post.Regenerate(r.Context(), postID, userID, isAdminRequest(r)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -22,11 +22,12 @@ func NewCalendarService(pool *pgxpool.Pool) *CalendarService {
 	return &CalendarService{pool: pool}
 }
 
-// schedulableStatuses are the post statuses from which scheduling is allowed.
+// schedulableStatuses are the post statuses from which an author may schedule.
+// Only approved posts qualify: the schedule worker releases due posts straight
+// to the publish stage, so scheduling must never be a way around review.
+// Admins schedule unreviewed posts by approving them with a scheduled_at.
 var schedulableStatuses = map[string]bool{
-	"draft":     true,
-	"generated": true,
-	"approved":  true,
+	"approved": true,
 }
 
 // GetCalendar returns posts grouped by date within the given time range.
@@ -100,8 +101,7 @@ func (s *CalendarService) GetCalendar(ctx context.Context, userID uuid.UUID, sta
 }
 
 // SchedulePost sets a post to be published at a future time.
-// The post must belong to the user and be in a schedulable status
-// (draft, generated, or approved).
+// The post must belong to the user and already be approved.
 func (s *CalendarService) SchedulePost(ctx context.Context, userID, postID uuid.UUID, scheduledAt time.Time, timezone string) error {
 	if scheduledAt.Before(time.Now().UTC()) {
 		return fmt.Errorf("scheduled_at must be in the future")
@@ -284,15 +284,21 @@ func (s *CalendarService) TransitionToPublishing(ctx context.Context, postID uui
 		return false, fmt.Errorf("lock post: %w", err)
 	}
 
-	_, err = tx.Exec(ctx, `
+	// Release to the publish stage only if the post had passed review before it
+	// was scheduled. Anything else (rows written before scheduling was limited
+	// to approved posts) goes back to its previous status, or to review.
+	var released bool
+	err = tx.QueryRow(ctx, `
 		UPDATE posts
-		SET status = 'approved'::post_status,
+		SET status = CASE WHEN pre_schedule_status = 'approved' THEN 'approved'::post_status
+		                  ELSE COALESCE(NULLIF(pre_schedule_status, ''), 'pending_review')::post_status END,
 			pre_schedule_status = NULL,
 			processing_started_at = NULL,
 			updated_at = NOW()
-		WHERE id = $1`,
+		WHERE id = $1
+		RETURNING status = 'approved'::post_status`,
 		postID,
-	)
+	).Scan(&released)
 	if err != nil {
 		return false, fmt.Errorf("transition to publishing: %w", err)
 	}
@@ -301,5 +307,5 @@ func (s *CalendarService) TransitionToPublishing(ctx context.Context, postID uui
 		return false, fmt.Errorf("commit: %w", err)
 	}
 
-	return true, nil
+	return released, nil
 }

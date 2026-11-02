@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -87,7 +90,8 @@ func (h *Handler) GetAdminReviewQueue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ApprovePost handles POST /api/v1/admin/posts/{id}/approve
+// ApprovePost handles POST /api/v1/admin/posts/{id}/approve. An optional
+// body {"scheduled_at": "<RFC3339>"} approves the post into the schedule.
 func (h *Handler) ApprovePost(w http.ResponseWriter, r *http.Request) {
 	postID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -95,12 +99,24 @@ func (h *Handler) ApprovePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.services.Post.AdminApprove(r.Context(), postID); err != nil {
+	var req struct {
+		ScheduledAt *time.Time `json:"scheduled_at"`
+	}
+	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.services.Post.AdminApprove(r.Context(), postID, req.ScheduledAt); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+	status := "approved"
+	if req.ScheduledAt != nil {
+		status = "scheduled"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
 // RejectPost handles POST /api/v1/admin/posts/{id}/reject
@@ -134,7 +150,7 @@ func (h *Handler) AdminPublishPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Approve first if in review state (ignore error if already approved)
-	_ = h.services.Post.AdminApprove(r.Context(), postID)
+	_ = h.services.Post.AdminApprove(r.Context(), postID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "queued",

@@ -405,7 +405,7 @@ func TestPostStatusTransitions(t *testing.T) {
 	}
 
 	// AdminApprove should transition to approved
-	err = svc.AdminApprove(ctx, post.ID)
+	err = svc.AdminApprove(ctx, post.ID, nil)
 	if err != nil {
 		t.Fatalf("AdminApprove failed: %v", err)
 	}
