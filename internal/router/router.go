@@ -179,10 +179,14 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 
 	rl := middleware.NewRateLimiter(apiRatePerSecond, apiBurst, cfg.TrustProxyHeaders)
 
+	// Outermost first: Recovery → Logging → SecurityHeaders → CORS →
+	// RequestID → rate limit → body limit → mux.
 	var chain http.Handler = mux
+	chain = middleware.LimitBody(middleware.MaxRequestBodyBytes)(chain)
 	chain = rl.Middleware(chain)
 	chain = middleware.RequestID(chain)
 	chain = middleware.CORS(cfg.App.FrontendURL)(chain)
+	chain = middleware.SecurityHeaders(cfg.IsProd())(chain)
 	chain = middleware.Logging(logger)(chain)
 	chain = middleware.Recovery(chain)
 	return chain

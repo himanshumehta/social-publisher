@@ -178,3 +178,11 @@ func TestWriteJSON_StatusCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteError_RedactsTokens(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeError(w, http.StatusBadGateway, `Post "https://graph.facebook.com/v21.0/123/videos?access_token=EAAsecret": timeout`)
+	if strings.Contains(w.Body.String(), "EAAsecret") {
+		t.Fatalf("token leaked to client: %s", w.Body.String())
+	}
+}

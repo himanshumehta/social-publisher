@@ -65,12 +65,18 @@ func (s *S3Client) CreateMultipartUpload(ctx context.Context, key, contentType s
 	return *out.UploadId, nil
 }
 
+// MaxPartNumber is the S3 limit on parts per multipart upload.
+const MaxPartNumber = 10000
+
 func (s *S3Client) PresignUploadPart(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	if partNumber < 1 || partNumber > MaxPartNumber {
+		return "", fmt.Errorf("part number %d out of range 1..%d", partNumber, MaxPartNumber)
+	}
 	out, err := s.presigner.PresignUploadPart(ctx, &s3.UploadPartInput{
 		Bucket:     aws.String(s.bucket),
 		Key:        aws.String(key),
 		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int32(int32(partNumber)),
+		PartNumber: aws.Int32(int32(partNumber)), // #nosec G115 -- bounded by MaxPartNumber above
 	}, s3.WithPresignExpires(expiry))
 	if err != nil {
 		return "", fmt.Errorf("presign upload part %d: %w", partNumber, err)
@@ -81,8 +87,11 @@ func (s *S3Client) PresignUploadPart(ctx context.Context, key, uploadID string, 
 func (s *S3Client) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []CompletedPart) error {
 	completedParts := make([]types.CompletedPart, len(parts))
 	for i, p := range parts {
+		if p.PartNumber < 1 || p.PartNumber > MaxPartNumber {
+			return fmt.Errorf("part number %d out of range 1..%d", p.PartNumber, MaxPartNumber)
+		}
 		completedParts[i] = types.CompletedPart{
-			PartNumber: aws.Int32(int32(p.PartNumber)),
+			PartNumber: aws.Int32(int32(p.PartNumber)), // #nosec G115 -- bounded by MaxPartNumber above
 			ETag:       aws.String(p.ETag),
 		}
 	}

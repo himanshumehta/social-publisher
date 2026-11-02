@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/himanshumehta/social-publisher/internal/redact"
 )
 
 // UploadOrchestrator dispatches publish requests to the correct platform service
@@ -317,14 +319,15 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func (o *UploadOrchestrator) markFailed(ctx context.Context, item *UploadQueueItem, uploadErr error) {
-	adminMsg := MapPlatformError(uploadErr.Error())
+	errMsg := redact.String(uploadErr.Error())
+	adminMsg := MapPlatformError(errMsg)
 	_, _ = o.pool.Exec(ctx,
 		`UPDATE upload_queue SET status = 'failed', last_error = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
-		uploadErr.Error(), item.ID)
+		errMsg, item.ID)
 	_, _ = o.pool.Exec(ctx,
 		`UPDATE publish_records SET status = 'failed', error_message = $1, upload_completed_at = NOW(), updated_at = NOW(),
 		 platform_metadata = platform_metadata || jsonb_build_object('admin_message', $2::text) WHERE id = $3`,
-		uploadErr.Error(), adminMsg, item.PublishRecordID)
+		errMsg, adminMsg, item.PublishRecordID)
 }
 
 func (o *UploadOrchestrator) markCompleted(ctx context.Context, item *UploadQueueItem, platformContentID string) {
@@ -591,7 +594,7 @@ func (o *UploadOrchestrator) getChannelToken(ctx context.Context, channelID uuid
 func (o *UploadOrchestrator) markProcessingFailed(ctx context.Context, publishRecordID uuid.UUID, errMsg string) error {
 	_, err := o.pool.Exec(ctx,
 		`UPDATE publish_records SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
-		errMsg, publishRecordID)
+		redact.String(errMsg), publishRecordID)
 	return err
 }
 

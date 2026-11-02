@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/model"
+	"github.com/himanshumehta/social-publisher/internal/redact"
 )
 
 type PostService struct {
@@ -780,7 +781,7 @@ func (s *PostService) failStage(ctx context.Context, postID uuid.UUID, failStatu
 			processing_started_at = NULL,
 			updated_at = NOW()
 		WHERE id = $1`,
-		postID, failStatus, errMsg,
+		postID, failStatus, redact.String(errMsg),
 	)
 	return err
 }

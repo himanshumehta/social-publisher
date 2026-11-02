@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -45,10 +46,15 @@ func (s *APIKeyService) ValidateKey(ctx context.Context, keyHash string) (*model
 		return nil, fmt.Errorf("API key has expired")
 	}
 
-	go func() {
-		s.pool.Exec(context.Background(), `
-			UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, apiKey.ID)
-	}()
+	// Record usage off the request path; the request context may already be
+	// cancelled by the time this runs, so it gets its own short deadline.
+	go func(id uuid.UUID) { // #nosec G118 -- intentionally detached from the request
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, id); err != nil {
+			slog.Warn("api key: update last_used_at failed", "key_id", id, "error", err)
+		}
+	}(apiKey.ID)
 
 	return apiKey, nil
 }

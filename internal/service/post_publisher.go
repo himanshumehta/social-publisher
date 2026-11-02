@@ -20,6 +20,7 @@ import (
 
 	"github.com/himanshumehta/social-publisher/internal/model"
 	"github.com/himanshumehta/social-publisher/internal/netguard"
+	"github.com/himanshumehta/social-publisher/internal/redact"
 )
 
 // Rate limiter and circuit breaker configuration.
@@ -343,7 +344,7 @@ func (pp *PostPublisher) runAdapter(
 
 	if err != nil {
 		result.Status = "failed"
-		result.Error = err.Error()
+		result.Error = redact.String(err.Error())
 		if breaker, ok := pp.breakers[platform]; ok {
 			breaker.recordFailure()
 		}

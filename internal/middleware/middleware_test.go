@@ -3,10 +3,12 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,8 +321,13 @@ func TestCORS_Wildcard(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://anything.com" {
-		t.Errorf("expected wildcard to allow any origin, got %s", got)
+	// A wildcard with credentials would let any site read authenticated
+	// responses; it must allow nothing (config.Validate also rejects it).
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("wildcard must not reflect arbitrary origins, got %s", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("wildcard must not allow credentials, got %s", got)
 	}
 }
 
@@ -366,7 +373,7 @@ func TestCORS_AllowedMethods(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	methods := w.Header().Get("Access-Control-Allow-Methods")
-	if methods != "GET, POST, PUT, DELETE, OPTIONS" {
+	if methods != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Errorf("unexpected Allow-Methods: %s", methods)
 	}
 }
@@ -1020,5 +1027,65 @@ func TestRequireAuth_RejectsWeakTokens(t *testing.T) {
 				t.Fatalf("status %d, want %d", w.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestCORS_VaryOrigin(t *testing.T) {
+	w := httptest.NewRecorder()
+	CORS("http://localhost:3000")(okHandler()).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Header().Get("Vary") != "Origin" {
+		t.Errorf("Vary = %q, want Origin (responses differ per origin)", w.Header().Get("Vary"))
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	w := httptest.NewRecorder()
+	SecurityHeaders(true)(okHandler()).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/posts", nil))
+	for k, want := range map[string]string{
+		"X-Content-Type-Options":    "nosniff",
+		"X-Frame-Options":           "DENY",
+		"Referrer-Policy":           "no-referrer",
+		"Content-Security-Policy":   "default-src 'none'; frame-ancestors 'none'",
+		"Cache-Control":             "no-store",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+	} {
+		if got := w.Header().Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	w = httptest.NewRecorder()
+	SecurityHeaders(false)(okHandler()).ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
+	if w.Header().Get("Strict-Transport-Security") != "" {
+		t.Error("HSTS set in development")
+	}
+}
+
+func TestLimitBody(t *testing.T) {
+	read := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			http.Error(w, "too big", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	h := LimitBody(16)(read)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/", strings.NewReader("small")))
+	if w.Code != http.StatusOK {
+		t.Fatalf("small body: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/", strings.NewReader(strings.Repeat("x", 17))))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("declared oversize body: %d", w.Code)
+	}
+	// Chunked body with no Content-Length: the reader enforces the cap.
+	req := httptest.NewRequest("POST", "/", io.NopCloser(strings.NewReader(strings.Repeat("x", 64))))
+	req.ContentLength = -1
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("streamed oversize body: %d", w.Code)
 	}
 }

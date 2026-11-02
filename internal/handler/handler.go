@@ -9,6 +9,7 @@ import (
 
 	"github.com/himanshumehta/social-publisher/internal/config"
 	"github.com/himanshumehta/social-publisher/internal/middleware"
+	"github.com/himanshumehta/social-publisher/internal/redact"
 	"github.com/himanshumehta/social-publisher/internal/service"
 )
 
@@ -28,8 +29,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeError sends {"error": msg}. Messages often wrap upstream platform
+// errors, so they are redacted before leaving the process.
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	writeJSON(w, status, map[string]string{"error": redact.String(msg)})
 }
 
 func readJSON(r *http.Request, v any) error {

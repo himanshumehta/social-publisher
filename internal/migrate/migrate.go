@@ -277,7 +277,7 @@ func hasAlterTypeAddValue(content string) bool {
 }
 
 func (m *Migrator) applyUp(ctx context.Context, conn *pgxpool.Conn, file, version string) error {
-	content, err := os.ReadFile(file)
+	content, err := os.ReadFile(file) // #nosec G304 -- file comes from listing the migrations directory, not from user input
 	if err != nil {
 		return fmt.Errorf("read %s: %w", file, err)
 	}
@@ -344,7 +344,7 @@ func (m *Migrator) applyUp(ctx context.Context, conn *pgxpool.Conn, file, versio
 }
 
 func (m *Migrator) applyDown(ctx context.Context, conn *pgxpool.Conn, file, version string) error {
-	content, err := os.ReadFile(file)
+	content, err := os.ReadFile(file) // #nosec G304 -- file comes from listing the migrations directory, not from user input
 	if err != nil {
 		return fmt.Errorf("read %s: %w", file, err)
 	}

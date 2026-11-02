@@ -10,12 +10,17 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/himanshumehta/social-publisher/internal/config"
+	"github.com/himanshumehta/social-publisher/internal/redact"
 )
 
 // NewLogger returns the JSON logger every binary uses and installs it as the
-// slog default.
+// slog default. String and error attributes pass through redact, so OAuth
+// tokens embedded in request URLs or error bodies never reach the log.
 func NewLogger() *slog.Logger {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       slog.LevelInfo,
+		ReplaceAttr: redact.ReplaceAttr, // tokens in URLs and API error bodies
+	}))
 	slog.SetDefault(logger)
 	return logger
 }

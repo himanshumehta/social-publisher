@@ -27,9 +27,9 @@ import (
 const (
 	youtubeUploadURL  = "https://www.googleapis.com/upload/youtube/v3/videos"
 	youtubeVideosURL  = "https://www.googleapis.com/youtube/v3/videos"
-	youtubeTokenURL   = "https://oauth2.googleapis.com/token"
-	youtubeUploadCost = 1600             // quota units per videos.insert
-	youtubeChunkSize  = 10 * 1024 * 1024 // 10 MB
+	youtubeTokenURL   = "https://oauth2.googleapis.com/token" // #nosec G101 -- endpoint URL, not a credential
+	youtubeUploadCost = 1600                                  // quota units per videos.insert
+	youtubeChunkSize  = 10 * 1024 * 1024                      // 10 MB
 )
 
 // YouTubeUploadService handles resumable uploads to YouTube using raw HTTP.

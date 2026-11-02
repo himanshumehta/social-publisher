@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -126,8 +127,10 @@ func (h *Handler) FacebookChannelCallback(w http.ResponseWriter, r *http.Request
 	if channelType == "creator" {
 		page = "/settings/channels"
 	}
-	redirectURL := fmt.Sprintf("%s%s?connected=%s", h.cfg.App.FrontendURL, page, strings.Join(ids, ","))
-	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+	// The destination is the configured frontend origin; only our own channel
+	// IDs go in the query string.
+	redirectURL := h.cfg.App.FrontendURL + page + "?" + url.Values{"connected": {strings.Join(ids, ",")}}.Encode()
+	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect) // #nosec G710 -- fixed origin from config, not from the request
 }
 
 // ---------------------------------------------------------------------------

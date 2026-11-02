@@ -201,7 +201,7 @@ func Load() *Config {
 
 // devJWTSecret is the fallback used when JWT_SECRET is unset. It is public
 // (it is in this file), so it is only accepted in development.
-const devJWTSecret = "dev-jwt-secret-change-me-in-production"
+const devJWTSecret = "dev-jwt-secret-change-me-in-production" // #nosec G101 -- public dev default, rejected outside development by Validate
 
 // MinJWTSecretLen is the minimum HMAC key length accepted at startup.
 const MinJWTSecretLen = 32

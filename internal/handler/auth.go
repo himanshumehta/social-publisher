@@ -11,7 +11,8 @@ const refreshCookieName = "refresh_token"
 // setRefreshCookie stores the refresh token in an HttpOnly cookie scoped to
 // the auth endpoints. maxAge < 0 deletes the cookie.
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
+	// Secure is off only in development (plain http on localhost).
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly and SameSite always set; Secure outside development
 		Name:     refreshCookieName,
 		Value:    value,
 		Path:     "/api/v1/auth",
