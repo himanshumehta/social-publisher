@@ -33,11 +33,23 @@ func (h *Handler) ExternalCreatePost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Machine clients have no submit endpoint: ready-made copy goes straight
+	// to review (automated checks, then an admin). Posts with a source_url
+	// enter the scan → generate pipeline instead.
+	if post.Status == "creator_editing" {
+		if err := h.services.Post.Submit(r.Context(), post.ID, apiKeyCtx.UserID); err != nil {
+			writeError(w, http.StatusInternalServerError, "post created but could not be submitted for review")
+			return
+		}
+		if reviewed, err := h.services.Post.GetByID(r.Context(), post.ID, apiKeyCtx.UserID, false); err == nil {
+			post = reviewed // pending_review, or flagged by the automated review
+		}
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":      post.ID,
 		"status":  post.Status,
-		"message": "Post created and queued for processing",
+		"message": "Post created; it is published after an admin approves it",
 	})
 }
 

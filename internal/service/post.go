@@ -687,6 +687,11 @@ func (s *PostService) Submit(ctx context.Context, postID, authorID uuid.UUID) er
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("post not in submittable state or not owned by you")
 	}
+	// Hand-written copy gets the same automated review as generated copy, so
+	// the admin sees length, hashtag and blocked-term flags either way.
+	if s.reviewer != nil {
+		return s.CompleteSystemReview(ctx, postID)
+	}
 	return nil
 }
 

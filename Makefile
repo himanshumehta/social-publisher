@@ -1,4 +1,4 @@
-.PHONY: help dev worker build migrate test vet fmt tidy up down logs
+.PHONY: help dev worker build migrate api-key test vet fmt tidy up down logs
 
 help: ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
@@ -13,6 +13,9 @@ worker: ## run the background worker
 migrate: ## apply database migrations
 	set -a && . ./.env && set +a && go run ./cmd/migrate up
 
+api-key: ## mint an API key for DEV_ADMIN_EMAIL (printed once)
+	set -a && . ./.env && set +a && go run ./cmd/admin create-api-key -email "$$DEV_ADMIN_EMAIL" -name local-client
+
 build: ## build all binaries into bin/
 	go build -o bin/server ./cmd/server
 	go build -o bin/migrate ./cmd/migrate
@@ -21,7 +24,7 @@ build: ## build all binaries into bin/
 	go build -o bin/admin ./cmd/admin
 
 # --- Quality ---
-test: ## run unit tests (DB-backed tests skip without a database)
+test: ## run tests (DB-backed tests skip unless TEST_DATABASE_URL is set)
 	go test ./...
 
 vet: ## go vet

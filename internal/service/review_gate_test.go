@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +140,28 @@ func TestRegenerate_RequiresOwnershipOrAdmin(t *testing.T) {
 	}
 	if err := postSvc.Regenerate(ctx, id, ownerID, false); err != nil {
 		t.Errorf("owner regenerate: %v", err)
+	}
+}
+
+func TestSubmit_RunsAutomatedReview(t *testing.T) {
+	ctx, pool, _, _, userID := newGateFixture(t)
+	svc := NewPostService(pool, nil, nil, NewPostReviewer(slog.Default()), slog.Default())
+	post, err := svc.Create(ctx, userID, &model.CreatePostRequest{
+		Title:           "Too long",
+		TargetPlatforms: []string{"twitter"},
+		PlatformPosts:   map[string]*model.PlatformPostEdit{"twitter": {Text: strings.Repeat("a", 300)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Submit(ctx, post.ID, userID); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	got, err := svc.GetByID(ctx, post.ID, userID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "pending_review" || !strings.Contains(got.SystemReviewNotes, "char_limit_exceeded") {
+		t.Fatalf("status %q, notes %q: hand-written copy skipped the automated review", got.Status, got.SystemReviewNotes)
 	}
 }
