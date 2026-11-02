@@ -33,8 +33,8 @@ Every network has its own OAuth flavour, upload protocol (resumable chunks, cont
 ```mermaid
 flowchart LR
     client["data-to-video / curl / UI"] -->|"JWT or API key"| api["server (cmd/server)"]
-    api --> db[("PostgreSQL: posts, upload_queue, publish_records, channels with AES-GCM tokens")]
-    api -->|"presigned URLs"| s3[("S3 / MinIO: videos, thumbnails")]
+    api --> db[("PostgreSQL: posts, upload_queue, publish_records, ingest_requests, channels with AES-GCM tokens")]
+    api -->|"presigned URLs; API-key video ingest"| s3[("S3 / MinIO: videos, thumbnails")]
     db -->|"FOR UPDATE SKIP LOCKED"| worker["worker (cmd/worker)"]
     worker --> pipe["post pipeline: scan, generate, review, publish"]
     worker --> sched["schedule release (60s)"]
@@ -50,7 +50,7 @@ flowchart LR
     worker -.-> redis[("Redis: quota counters, scan and generation cache, OAuth state")]
 ```
 
-A text/image post moves through these states. Every path to `approved` goes through an admin; scheduling only holds an approved post until its time.
+A post moves through these states (an ingested video post starts at `pending_review` or `flagged`). Every path to `approved` goes through an admin; scheduling only holds an approved post until its time.
 
 ```mermaid
 stateDiagram-v2
@@ -61,6 +61,7 @@ stateDiagram-v2
     generated --> pending_review: automated review
     generated --> flagged: automated review blocks
     creator_editing --> pending_review: submit (automated review)
+    [*] --> pending_review: video ingest (automated review)
     pending_review --> approved: admin approves
     flagged --> approved: admin overrides
     pending_review --> scheduled: admin approves with scheduled_at
@@ -77,6 +78,7 @@ stateDiagram-v2
 |---|---|---|
 | Router | Declarative route table with an access level per route; global middleware chain | `internal/router/router.go` |
 | Post pipeline | Scan, generate and publish workers over Postgres-backed stages | `internal/worker/post_pipeline.go` |
+| Video ingest | API-key multipart upload: streamed, size-capped and sniffed, stored in S3, turned into a `pending_review` post with a linked video; `Idempotency-Key` per owner | `internal/handler/video_ingest.go`, `internal/service/video_ingest.go` |
 | Post publisher | Fans one post out to each platform concurrently; rate limiter and circuit breaker per platform; dry-run swap | `internal/service/post_publisher.go`, `publish_adapter.go` |
 | Upload orchestrator | Video queue: claim, upload via the platform service, poll asynchronous processing | `internal/service/upload_orchestrator.go`, `platform_*.go` |
 | Generator and reviewer | Claude call with retries and cache; output validation; rule-based review (length, hashtags, blocked terms and domains) | `internal/service/post_generator.go`, `post_reviewer.go` |
@@ -104,7 +106,11 @@ Five binaries share one module: `server`, `worker`, `migrate`, `admin`, and `thu
 
 **Idempotency at the platform level, not the request level.**
 *Why:* a worker can die after posting to two of five networks. Each success is written to `post_publish_links (UNIQUE post_id, platform)` as it happens; a post stuck in `publishing` for 5 minutes is reclaimed, and platforms already recorded are skipped.
-*Trade-off:* there is no `Idempotency-Key` on the HTTP API, so a client that retries a create request makes a second post (see Limitations).
+*Trade-off:* the JSON create endpoints have no `Idempotency-Key`, so a client that retries one makes a second post. The video ingest endpoint, which pipelines retry, does take one (next entry).
+
+**Video ingest stores first, then claims the key.**
+*Why:* `POST /api/v1/external/videos` writes the upload to S3 under a server-generated key unique to the attempt, then inserts the project, video, post and the `(owner, Idempotency-Key)` claim in one transaction. The claim goes last with `ON CONFLICT DO NOTHING`: a concurrent retry blocks on the unique index until the first transaction ends, then gets no row, rolls back, deletes only its own objects and answers with the winner's IDs. A DB-backed test sends six concurrent requests with one key and gets one post and one stored object.
+*Trade-off:* concurrent duplicates upload the bytes more than once before losing; claiming the key before the upload would avoid that but needs a pending state and recovery for claims whose upload never finishes.
 
 **Tokens are encrypted in the application, with rotation.**
 *Why:* AES-256-GCM in-process means a database dump alone does not expose brand-account tokens. `TOKEN_ENCRYPTION_KEY_PREVIOUS` lets a key roll over without downtime; tokens move to the new key on their next refresh.
@@ -128,7 +134,8 @@ Five binaries share one module: `server`, `worker`, `migrate`, `admin`, and `thu
 - **Back-pressure.** Per-platform token buckets (`golang.org/x/time/rate`) and a circuit breaker that opens after 5 consecutive failures for 5 minutes. YouTube quota (1,600 units per upload) is counted in Redis and shown at `GET /api/v1/admin/quota`; it is not enforced before an upload.
 - **Stuck work.** Posts left in `scanning`, `generating` or `publishing` for 5 minutes are reclaimed by the next worker. Video queue items stuck mid-upload are not reclaimed automatically.
 - **Observability.** JSON logs (`log/slog`) with request IDs, every value passed through a redactor that masks tokens, secrets and OAuth codes. `GET /health` for liveness, `GET /health/ready` checks Postgres (and reports Redis as degraded when down). There are no metrics endpoints yet.
-- **Housekeeping.** The worker removes abandoned upload sessions and expired refresh tokens every 6 hours and warns about channel tokens within 7 days of expiry.
+- **Request idempotency (video ingest).** Same key and same payload returns the original post (200, `"replayed": true`) without storing anything; same key with a different payload is 409. The payload hash is computed by the server from the normalized metadata and the SHA-256 of each streamed file.
+- **Housekeeping.** The worker removes abandoned upload sessions, expired refresh tokens and ingest idempotency keys older than 30 days every 6 hours, and warns about channel tokens within 7 days of expiry. After 30 days a replayed key creates a new post.
 
 ## Security
 
@@ -138,10 +145,83 @@ The threat model assumes the API is reachable from the internet, callers may be 
 - **Authentication:** HS256-only JWTs with mandatory expiry, rotating refresh tokens with reuse detection, bcrypt cost 12, uniform login failures, stricter rate limits on login and refresh, scoped API keys stored as SHA-256. No public signup; accounts come from `cmd/admin`.
 - **Secrets:** OAuth tokens sealed with AES-256-GCM, start-up fails on a bad key, and the redactor keeps tokens out of logs, stored errors and API responses.
 - **SSRF:** user-supplied URLs are fetched only through `netguard`, which checks the resolved address on every hop and caps response size.
-- **HTTP:** 1 MiB bodies, single-origin CORS, security headers with a `default-src 'none'` CSP, header and read timeouts, sanitised upload file names.
+- **Uploads (video ingest):** API key with `posts:create` checked before any of the body is read; the body cap (`INGEST_MAX_VIDEO_BYTES` plus 11 MiB for the thumbnail and form) applies to that route only; declared `Content-Type` must be `video/mp4` (thumbnail `image/jpeg` or `image/png`) and must match the sniffed type; object keys are server-generated; spooled temp files are removed on every path; unknown form parts and unknown metadata fields are rejected.
+- **HTTP:** 1 MiB bodies on every other route, single-origin CORS, security headers with a `default-src 'none'` CSP, header and read timeouts, sanitised upload file names.
 - **Supply chain:** govulncheck, gosec, staticcheck and gitleaks in CI; Dependabot for Go modules, Actions and the Dockerfile; non-root container.
 
 Reporting, scope and known gaps: [SECURITY.md](SECURITY.md).
+
+## API
+
+Every route is one line in `internal/router/router.go` with an access level (`Public`, `User`, `Admin`, `APIKey`); `router_test.go` checks each one.
+
+| Group | Routes | Access |
+|---|---|---|
+| Health, login, refresh, OAuth callbacks | `/health`, `/api/v1/auth/*`, `/api/v1/admin/channels/oauth/*/callback` | Public |
+| Posts and scheduling | `/api/v1/posts*`, `/api/v1/calendar` | User (own posts only) |
+| Review, publish, channels, videos | `/api/v1/admin/*`, `/api/v1/uploads/*`, `/api/v1/videos/*`, `/api/v1/projects/*` | Admin |
+| Machine clients | `POST /api/v1/external/posts`, `GET /api/v1/external/posts/{id}`, `POST /api/v1/external/videos` | API key (`posts:create` / `posts:read`) |
+
+**`POST /api/v1/external/videos`** (multipart/form-data)
+
+| Part / header | Required | Content |
+|---|---|---|
+| `Authorization: Bearer <key>` | yes | API key with `posts:create`; its owner must be active and becomes the post author |
+| `Idempotency-Key` | yes | 1 to 200 printable ASCII characters, scoped to the key's owner |
+| `metadata` | yes, send first | JSON: `title` (≤ 300 chars), `description`, `target_platforms` (any of `instagram`, `facebook`, `threads`, `youtube`, `linkedin`, `twitter`), optional `platform_posts` `{platform: {text, hashtags}}` (default caption: description, then title), `tags`. Unknown fields are rejected; each caption must fit its platform's limit. |
+| `video` | yes | `video/mp4`, at most `INGEST_MAX_VIDEO_BYTES` |
+| `thumbnail` | no | `image/jpeg` or `image/png`, at most 10 MiB |
+
+Responses: `201 {"post_id","video_id","status":"pending_review","replayed":false}` (or `"flagged"` when the automated review blocks it); `200` with the original IDs and `"replayed":true` for the same key and payload; `409` for the same key with a different payload; `400` invalid metadata or parts; `401`/`403` missing key or scope; `413` over a size cap; `415` a disallowed or mismatched type. Poll `GET /api/v1/external/posts/{post_id}` with a `posts:read` key for the status.
+
+## Integration with data-to-video
+
+[data-to-video](https://github.com/himanshumehta/data-to-video) renders the video; its `scripts/publish.py --send` uploads it here in one request that lists every platform the video's language goes to. Nothing is published until an admin approves the post.
+
+```mermaid
+sequenceDiagram
+    participant P as publish.py (data-to-video)
+    participant API as server (POST /api/v1/external/videos)
+    participant S3 as S3 / MinIO
+    participant DB as PostgreSQL
+    actor Admin
+    participant W as worker (publish loop)
+    participant A as PlatformAdapter (dry run or live)
+    P->>API: multipart metadata + video + thumbnail, Idempotency-Key
+    API->>API: API key + scope, size cap, type allow-list and sniff, SHA-256
+    API->>S3: put ingest/{owner}/{post}/video.mp4 (+ thumbnail)
+    API->>DB: one tx: project, video, post (pending_review), claim (owner, key)
+    API-->>P: 201 post_id, video_id
+    P->>API: same request again (retry)
+    API-->>P: 200 same ids, replayed (nothing stored)
+    Admin->>API: POST /api/v1/admin/posts/{id}/approve
+    W->>DB: claim approved post (FOR UPDATE SKIP LOCKED)
+    W->>A: one publish per target platform
+    A-->>W: dry run: "would publish ..." and a synthetic URL
+    W->>DB: post_publish_links rows, post published
+```
+
+`scripts/e2e_data_to_video.sh <data-to-video checkout> <output dir>` runs this whole path against running Postgres, Redis and S3-compatible storage (configured through the usual `DB_*`, `REDIS_*`, `S3_*` variables) and refuses to run unless `PUBLISH_DRY_RUN=true`. It builds the binaries, migrates, creates a throwaway admin and API-key owner with `cmd/admin`, starts the server and worker, sends the video, approves it, waits for `published`, sends it again and checks that the replay returns the same post. Output from a run on fresh clones of both repos (Postgres 18, Redis 7.2, MinIO, data-to-video `make setup && make demo`; IDs shortened):
+
+```text
+== publish.py --send (first)
+  sent instagram,facebook,threads,youtube/en: post_id=b0bfaab5-… video_id=d2137099-… status=pending_review (new post)
+status before approval: pending_review
+== admin approves
+{"status":"approved"}
+== wait for the worker
+status after approval: published
+would publish facebook b0bfaab5-… Royal Enfield Classic 350 — real ownersh...
+would publish instagram b0bfaab5-… Royal Enfield Classic 350 — real ownersh...
+would publish threads b0bfaab5-… Royal Enfield Classic 350 — real ownersh...
+would publish youtube b0bfaab5-… Royal Enfield Classic 350 — real ownersh...
+== publish.py --send (replay)
+  sent instagram,facebook,threads,youtube/en: post_id=b0bfaab5-… video_id=d2137099-… status=published (replayed, no new post)
+posts owned by the API key: 1
+E2E OK
+```
+
+The bucket held one `video.mp4` (6.7 MiB) and one `thumbnail.jpg` after both sends. Each worker line also carries `"video_key":"ingest/<owner>/<post>/video.mp4"`.
 
 ## Quickstart
 
@@ -150,7 +230,7 @@ Requirements: Go 1.26+ (the `toolchain go1.27.3` line in `go.mod` downloads the 
 ```bash
 git clone https://github.com/himanshumehta/social-publisher && cd social-publisher
 cp .env.example .env    # point DB_* and REDIS_ADDR at your Postgres and Redis; APP_PORT is the API port
-make migrate            # 39 migrations
+make migrate            # 40 migrations
 make dev                # terminal 1: API
 make worker             # terminal 2: background loops
 ```
@@ -220,7 +300,8 @@ All variables are in [`.env.example`](.env.example). The ones that matter:
 | `TOKEN_ENCRYPTION_KEY_PREVIOUS` | empty | Comma-separated retired keys accepted for decryption during rotation. |
 | `TRUST_PROXY_HEADERS` | `false` | Key rate limits on `CF-Connecting-IP` / `X-Real-IP`. Only behind a proxy that sets them. |
 | `OUTBOUND_ALLOW_PRIVATE_NETWORKS` | `false` | Let user-supplied URLs reach private addresses (local MinIO testing only). |
-| `S3_*` | MinIO on `localhost:9000` | Video and thumbnail storage. |
+| `S3_*` | MinIO on `localhost:9000` | Video and thumbnail storage. The bucket must exist. |
+| `INGEST_MAX_VIDEO_BYTES` | `536870912` (512 MiB) | Largest video `POST /api/v1/external/videos` accepts; larger uploads get 413. |
 | `GOOGLE_*`, `FACEBOOK_*`, `INSTAGRAM_*`, `THREADS_*`, `TWITTER_*`, `LINKEDIN_*` | placeholders | OAuth app credentials and redirect URLs for connecting real channels. |
 | `CLAUDE_API_KEY` | empty | Optional. Generates copy for posts created from a `source_url`. |
 
@@ -234,7 +315,7 @@ TEST_DATABASE_URL=postgres://socialpub:socialpub@localhost:5432/socialpub_test?s
   go test ./...                              # after `make migrate` against that database
 ```
 
-There are 260 `Test` functions (`grep '^func Test'` over `*_test.go`). Against a freshly migrated database, `go test -json ./...` reported 444 passing tests and subtests, 0 failing and 4 skipped (those four need pre-seeded upload fixtures). Without a database: 398 pass, 50 skip, 0 fail. Coverage includes the route access table, JWT and rate-limit hardening, config validation, token encryption and rotation, SSRF and redaction, upload validation, model-output validation, the review gate, account provisioning, and the dry-run adapters. CI runs the DB-backed suite against a Postgres service container.
+There are 273 `Test` functions (`grep '^func Test'` over `*_test.go`). Against a freshly migrated database, `go test -json ./...` reported 471 passing tests and subtests, 0 failing and 4 skipped (those four need pre-seeded upload fixtures). Without a database: 406 pass, 56 skip, 0 fail. Coverage includes the route access table and per-route body caps, JWT and rate-limit hardening, config validation, token encryption and rotation, SSRF and redaction, upload validation, model-output validation, the review gate, account provisioning, the dry-run adapters, and video ingest over HTTP and Postgres (idempotent replay, conflicting replay, six concurrent retries, missing key or scope, oversize, wrong and spoofed types, temp-file cleanup, key expiry, and the review gate through to a dry-run publish). CI runs the DB-backed suite against a Postgres service container.
 
 ## Project layout
 
@@ -249,12 +330,14 @@ internal/
   worker/    post pipeline                      middleware/ auth, rate limit, CORS, headers
   netguard/  SSRF-safe HTTP client              redact/     credential masking
   config/    env config + validation            app/        shared start-up
-migrations/  39 ordered SQL migrations
+migrations/  40 ordered SQL migrations
+scripts/     e2e_data_to_video.sh: data-to-video → ingest → approve → publish
 ```
 
 ## Limitations and roadmap
 
-- **data-to-video contract.** The sibling pipeline's `scripts/publish.py` (dry run by default) is written against a multipart `POST /v1/posts` that carries the video file and an `Idempotency-Key`. This service exposes JSON `POST /api/v1/external/posts` with a scoped API key and does not read `Idempotency-Key`, and videos enter through the upload API rather than in the post request. A video-ingest endpoint for API keys that honours the idempotency key is the next piece of work.
+- **Live publishing of ingested videos.** With `PUBLISH_DRY_RUN=false`, a post with a linked video fails each platform with an explicit error instead of going out through the text adapters, which would drop the video. Live delivery of an ingested video today means queuing it from the admin video path (`POST /api/v1/videos/{id}/publish-to-platform`). Handing approved video posts to the upload queue is the next piece of work.
+- **Ingest uploads are spooled once.** The handler writes each file to a temp file (to size-check, hash and sniff it before storage) and then streams that file to S3, so the host needs free disk for the largest allowed upload.
 - **Real posting** needs your own developer app on each network, connected channels and usually app review (Meta for Instagram, Facebook and Threads publishing; LinkedIn product access; an X app with write scopes). Platform quotas apply.
 - **No UI.** The API is the interface; OAuth callbacks redirect to `APP_FRONTEND_URL`, which you provide.
 - **Single-instance assumptions.** Rate limiters, circuit breakers and the OAuth-state fallback are per process.
