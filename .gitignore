@@ -1,0 +1,34 @@
+# Binaries
+bin/
+/server
+/worker
+/migrate
+/thumbgen
+*.exe
+*.test
+*.out
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+coverage.*
+
+# Local artifacts
+*.tar.gz
+*.mp4
+*.mov
+tmp/

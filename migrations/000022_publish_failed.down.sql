@@ -1,0 +1,2 @@
+-- PostgreSQL does not support removing enum values directly.
+-- The publish_failed value will remain but is harmless if unused.

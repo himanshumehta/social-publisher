@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS dub_outputs;
+DROP TABLE IF EXISTS dub_jobs;

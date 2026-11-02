@@ -1,0 +1,7 @@
+BEGIN;
+
+DROP TABLE IF EXISTS sync_queue;
+DROP TABLE IF EXISTS push_queue;
+DROP TABLE IF EXISTS push_tokens;
+
+COMMIT;

@@ -1,0 +1,149 @@
+-- Migration 000009: Direct Publish + Auto-Clip workflows
+-- Adds support for:
+-- 1. Workflow type discriminator on projects
+-- 2. Pre-publish channel targeting
+-- 3. AI clip generation job tracking
+-- 4. Video lineage and virality scoring
+
+BEGIN;
+
+-- ============================================================================
+-- 1. Add workflow_type to projects
+-- ============================================================================
+
+ALTER TABLE projects
+ADD COLUMN workflow_type TEXT NOT NULL DEFAULT 'standard';
+
+ALTER TABLE projects
+ADD CONSTRAINT projects_workflow_type_check
+CHECK (workflow_type IN ('standard', 'direct_publish', 'auto_clip'));
+
+CREATE INDEX idx_projects_workflow_type ON projects(workflow_type);
+
+COMMENT ON COLUMN projects.workflow_type IS 'Workflow type: standard (edit pipeline), direct_publish (skip editing), auto_clip (AI clip generation)';
+
+-- ============================================================================
+-- 2. Create channel_targets table
+-- ============================================================================
+
+CREATE TABLE channel_targets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    video_id UUID REFERENCES videos(id) ON DELETE SET NULL,
+    deliverable_id UUID REFERENCES deliverables(id) ON DELETE SET NULL,
+    deliverable_version_id UUID REFERENCES deliverable_versions(id) ON DELETE SET NULL,
+    channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    scheduled_at TIMESTAMPTZ,
+    created_by UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure exactly one content reference is set (video_id, deliverable_id, or deliverable_version_id)
+ALTER TABLE channel_targets
+ADD CONSTRAINT channel_targets_content_check
+CHECK (
+    (video_id IS NOT NULL AND deliverable_id IS NULL AND deliverable_version_id IS NULL) OR
+    (video_id IS NULL AND deliverable_id IS NULL AND deliverable_version_id IS NOT NULL) OR
+    (video_id IS NULL AND deliverable_id IS NOT NULL AND deliverable_version_id IS NULL)
+);
+
+-- Prevent duplicate targets for the same video + channel
+CREATE UNIQUE INDEX idx_channel_targets_video_channel
+ON channel_targets(video_id, channel_id)
+WHERE video_id IS NOT NULL;
+
+-- Prevent duplicate targets for the same deliverable_version + channel
+CREATE UNIQUE INDEX idx_channel_targets_deliverable_version_channel
+ON channel_targets(deliverable_version_id, channel_id)
+WHERE deliverable_version_id IS NOT NULL;
+
+-- Prevent duplicate targets for the same deliverable + channel
+CREATE UNIQUE INDEX idx_channel_targets_deliverable_channel
+ON channel_targets(deliverable_id, channel_id)
+WHERE deliverable_id IS NOT NULL;
+
+CREATE INDEX idx_channel_targets_project_id ON channel_targets(project_id);
+CREATE INDEX idx_channel_targets_channel_id ON channel_targets(channel_id);
+
+COMMENT ON TABLE channel_targets IS 'Pre-publish channel targets created by creators before admin approval';
+COMMENT ON COLUMN channel_targets.video_id IS 'For direct_publish workflow: raw video to publish';
+COMMENT ON COLUMN channel_targets.deliverable_id IS 'For standard workflow: deliverable to publish';
+COMMENT ON COLUMN channel_targets.deliverable_version_id IS 'For standard workflow: specific deliverable version to publish';
+COMMENT ON COLUMN channel_targets.scheduled_at IS 'Optional: scheduled publish time';
+
+-- ============================================================================
+-- 3. Create clip_jobs table
+-- ============================================================================
+
+CREATE TABLE clip_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    clip_count INT NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL DEFAULT '',
+    config JSONB NOT NULL DEFAULT '{}',
+    error_message TEXT,
+    created_by UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+);
+
+ALTER TABLE clip_jobs
+ADD CONSTRAINT clip_jobs_status_check
+CHECK (status IN ('pending', 'processing', 'completed', 'failed'));
+
+-- Partial index for worker to find pending/processing jobs efficiently
+CREATE INDEX idx_clip_jobs_status
+ON clip_jobs(status)
+WHERE status IN ('pending', 'processing');
+
+CREATE INDEX idx_clip_jobs_project_id ON clip_jobs(project_id);
+CREATE INDEX idx_clip_jobs_source_video_id ON clip_jobs(source_video_id);
+
+COMMENT ON TABLE clip_jobs IS 'AI clip generation job tracking for auto_clip workflow';
+COMMENT ON COLUMN clip_jobs.status IS 'Job status: pending (queued), processing (in progress), completed (done), failed (error)';
+COMMENT ON COLUMN clip_jobs.clip_count IS 'Number of clips generated by this job';
+COMMENT ON COLUMN clip_jobs.provider IS 'AI provider used for clip generation';
+COMMENT ON COLUMN clip_jobs.config IS 'AI generation parameters: clip_count, duration_range, style preferences, etc.';
+
+-- ============================================================================
+-- 4. Extend videos table for clip support
+-- ============================================================================
+
+ALTER TABLE videos
+ADD COLUMN source_video_id UUID REFERENCES videos(id) ON DELETE SET NULL;
+
+ALTER TABLE videos
+ADD COLUMN clip_job_id UUID REFERENCES clip_jobs(id) ON DELETE SET NULL;
+
+ALTER TABLE videos
+ADD COLUMN virality_score INT;
+
+-- Validate virality score range (0-99)
+ALTER TABLE videos
+ADD CONSTRAINT videos_virality_score_check
+CHECK (virality_score IS NULL OR (virality_score >= 0 AND virality_score <= 99));
+
+-- Index for finding clips generated from a source video
+CREATE INDEX idx_videos_source_video_id
+ON videos(source_video_id)
+WHERE source_video_id IS NOT NULL;
+
+-- Index for finding clips by job
+CREATE INDEX idx_videos_clip_job_id
+ON videos(clip_job_id)
+WHERE clip_job_id IS NOT NULL;
+
+-- Index for sorting clips by virality
+CREATE INDEX idx_videos_virality_score
+ON videos(virality_score DESC NULLS LAST)
+WHERE virality_score IS NOT NULL;
+
+COMMENT ON COLUMN videos.source_video_id IS 'NULL for original uploads, set for AI-generated clips to reference source video';
+COMMENT ON COLUMN videos.clip_job_id IS 'References the clip_job that generated this video';
+COMMENT ON COLUMN videos.virality_score IS 'AI-predicted engagement score (0-99), higher = more viral potential. NULL for non-AI clips.';
+
+COMMIT;
