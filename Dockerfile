@@ -6,7 +6,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 ARG TARGETOS TARGETARCH
-RUN for bin in server migrate worker thumbgen; do \
+RUN for bin in server migrate worker thumbgen admin; do \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -ldflags="-s -w" -o /out/$bin ./cmd/$bin || exit 1; \
     done

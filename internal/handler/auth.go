@@ -36,7 +36,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	tokens, user, err := h.services.Auth.Login(r.Context(), req)
 	if err != nil {
 		h.logger.Warn("login failed", "error", err)
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeError(w, http.StatusUnauthorized, service.ErrInvalidCredentials.Error())
 		return
 	}
 

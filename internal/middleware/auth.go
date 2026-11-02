@@ -33,7 +33,18 @@ func RoleFromContext(ctx context.Context) string {
 	return role
 }
 
+// SigningMethod is the only JWT algorithm the API issues or accepts.
+var SigningMethod = jwt.SigningMethodHS256
+
+// RequireAuth validates the bearer access token. The algorithm is pinned to
+// HS256 (no "none", no algorithm confusion) and an exp claim is mandatory.
 func RequireAuth(jwtSecret string) func(http.Handler) http.Handler {
+	key := []byte(jwtSecret)
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{SigningMethod.Alg()}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+	)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -49,11 +60,8 @@ func RequireAuth(jwtSecret string) func(http.Handler) http.Handler {
 			}
 
 			claims := &Claims{}
-			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (interface{}, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, jwt.ErrSignatureInvalid
-				}
-				return []byte(jwtSecret), nil
+			token, err := parser.ParseWithClaims(parts[1], claims, func(*jwt.Token) (interface{}, error) {
+				return key, nil
 			})
 			if err != nil || !token.Valid {
 				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)

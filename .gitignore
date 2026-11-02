@@ -4,6 +4,7 @@ bin/
 /worker
 /migrate
 /thumbgen
+/admin
 *.exe
 *.test
 *.out

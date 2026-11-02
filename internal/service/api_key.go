@@ -24,9 +24,10 @@ func NewAPIKeyService(pool *pgxpool.Pool, logger *slog.Logger) *APIKeyService {
 func (s *APIKeyService) ValidateKey(ctx context.Context, keyHash string) (*model.APIKey, error) {
 	apiKey := &model.APIKey{}
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, key_prefix, user_id, scopes, is_active, rate_limit, last_used_at, expires_at
-		FROM api_keys
-		WHERE key_hash = $1 AND is_active = TRUE`,
+		SELECT k.id, k.name, k.key_prefix, k.user_id, k.scopes, k.is_active, k.rate_limit, k.last_used_at, k.expires_at
+		FROM api_keys k
+		JOIN users u ON u.id = k.user_id
+		WHERE k.key_hash = $1 AND k.is_active = TRUE AND u.is_active = TRUE`,
 		keyHash,
 	).Scan(
 		&apiKey.ID, &apiKey.Name, &apiKey.KeyPrefix, &apiKey.UserID,

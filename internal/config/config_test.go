@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,9 +11,6 @@ func TestLoad_Defaults(t *testing.T) {
 	// Clear env to get defaults
 	os.Clearenv()
 	cfg := Load()
-	if cfg.App.Env != "development" {
-		t.Errorf("expected development, got %s", cfg.App.Env)
-	}
 	if cfg.App.Port != "8081" {
 		t.Errorf("expected 8081, got %s", cfg.App.Port)
 	}
@@ -61,21 +59,24 @@ func TestLoad_EnvOverrides(t *testing.T) {
 
 func TestIsDev(t *testing.T) {
 	cfg := &Config{App: AppConfig{Env: "development"}}
-	if !cfg.IsDev() {
-		t.Error("expected IsDev() true for development")
-	}
-	if cfg.IsProd() {
-		t.Error("expected IsProd() false for development")
+	if !cfg.IsDev() || cfg.IsProd() {
+		t.Error("development should be dev and not prod")
 	}
 }
 
-func TestIsProd(t *testing.T) {
-	cfg := &Config{App: AppConfig{Env: "production"}}
-	if !cfg.IsProd() {
-		t.Error("expected IsProd() true for production")
+func TestIsProd_FailsClosed(t *testing.T) {
+	for _, env := range []string{"production", "staging", "prod", ""} {
+		cfg := &Config{App: AppConfig{Env: env}}
+		if cfg.IsDev() || !cfg.IsProd() {
+			t.Errorf("APP_ENV=%q must be treated as production", env)
+		}
 	}
-	if cfg.IsDev() {
-		t.Error("expected IsDev() false for production")
+}
+
+func TestLoad_DefaultEnvIsProduction(t *testing.T) {
+	os.Clearenv()
+	if got := Load().App.Env; got != "production" {
+		t.Fatalf("default APP_ENV = %q, want production (fail closed)", got)
 	}
 }
 
@@ -90,37 +91,89 @@ func TestDBConfig_DSN(t *testing.T) {
 	}
 }
 
-func TestValidate_DevSkipsValidation(t *testing.T) {
-	cfg := &Config{App: AppConfig{Env: "development"}}
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("expected no error in dev, got %v", err)
+func devConfig() *Config {
+	os.Clearenv()
+	cfg := Load()
+	cfg.App.Env = "development"
+	return cfg
+}
+
+const goodKey = "8f3b2c1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+
+func prodConfig() *Config {
+	return &Config{
+		App: AppConfig{Env: "production", FrontendURL: "https://publisher.example.com"},
+		DB:  DBConfig{SSLMode: "require"},
+		S3:  S3Config{Endpoint: "s3.example.com"},
+		JWT: JWTConfig{
+			Secret:          "another-very-long-jwt-secret-that-is-at-least-32-chars",
+			AccessTokenTTL:  15 * time.Minute,
+			RefreshTokenTTL: 24 * time.Hour,
+		},
+		TokenEncKey: goodKey,
+	}
+}
+
+func TestValidate_DevDefaultsPass(t *testing.T) {
+	if err := devConfig().Validate(); err != nil {
+		t.Errorf("dev defaults should validate, got %v", err)
 	}
 }
 
 func TestValidate_ProdRejectsDefaults(t *testing.T) {
 	os.Clearenv()
-	cfg := Load()
-	cfg.App.Env = "production"
-	err := cfg.Validate()
+	err := Load().Validate()
 	if err == nil {
-		t.Error("expected validation error for production with default values")
+		t.Fatal("expected validation error for production with default values")
+	}
+	for _, want := range []string{"JWT_SECRET", "TOKEN_ENCRYPTION_KEY", "DB_SSLMODE", "APP_FRONTEND_URL", "S3_ENDPOINT"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %s: %v", want, err)
+		}
 	}
 }
 
 func TestValidate_ProdAcceptsGoodConfig(t *testing.T) {
-	cfg := &Config{
-		App: AppConfig{
-			Env:         "production",
-			FrontendURL: "https://publisher.example.com",
-		},
-		DB: DBConfig{SSLMode: "require"},
-		S3: S3Config{Endpoint: "s3.example.com"},
-		JWT: JWTConfig{
-			Secret: "another-very-long-jwt-secret-that-is-at-least-32-chars",
-		},
-	}
-	if err := cfg.Validate(); err != nil {
+	if err := prodConfig().Validate(); err != nil {
 		t.Errorf("expected no error for valid prod config, got %v", err)
+	}
+}
+
+func TestValidate_Rules(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"short jwt secret even in dev", func(c *Config) { c.App.Env = "development"; c.JWT.Secret = "short" }, "JWT_SECRET"},
+		{"dev jwt secret in prod", func(c *Config) { c.JWT.Secret = devJWTSecret }, "JWT_SECRET"},
+		{"bad hex key", func(c *Config) { c.TokenEncKey = "zz" }, "TOKEN_ENCRYPTION_KEY"},
+		{"short key", func(c *Config) { c.TokenEncKey = "00ff" }, "32 bytes"},
+		{"all-zero key", func(c *Config) { c.TokenEncKey = strings.Repeat("0", 64) }, "repeated byte"},
+		{"bad previous key", func(c *Config) { c.TokenEncKeysPrevious = []string{"nothex"} }, "PREVIOUS"},
+		{"wildcard cors", func(c *Config) { c.App.FrontendURL = "*" }, "APP_FRONTEND_URL"},
+		{"dev admin in prod", func(c *Config) { c.DevAdmin.Email = "a@example.com" }, "DEV_ADMIN"},
+		{"no ttl", func(c *Config) { c.JWT.AccessTokenTTL = 0 }, "TTL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := prodConfig()
+			tt.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() = %v, want error mentioning %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnvList(t *testing.T) {
+	os.Clearenv()
+	os.Setenv("TEST_LIST", " a, ,b ,")
+	defer os.Unsetenv("TEST_LIST")
+	got := envList("TEST_LIST")
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("envList = %q", got)
 	}
 }
 

@@ -760,9 +760,10 @@ func TestRateLimiter_Middleware_RateLimitResponseBody(t *testing.T) {
 
 func TestRateLimiter_Middleware_CFConnectingIP(t *testing.T) {
 	rl := &RateLimiter{
-		visitors: make(map[string]*visitor),
-		rate:     0.001,
-		burst:    1,
+		visitors:   make(map[string]*visitor),
+		rate:       0.001,
+		burst:      1,
+		trustProxy: true,
 	}
 	handler := rl.Middleware(okHandler())
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -784,9 +785,10 @@ func TestRateLimiter_Middleware_CFConnectingIP(t *testing.T) {
 
 func TestRateLimiter_Middleware_DifferentCFIPs(t *testing.T) {
 	rl := &RateLimiter{
-		visitors: make(map[string]*visitor),
-		rate:     0.001,
-		burst:    1,
+		visitors:   make(map[string]*visitor),
+		rate:       0.001,
+		burst:      1,
+		trustProxy: true,
 	}
 	handler := rl.Middleware(okHandler())
 
@@ -809,8 +811,60 @@ func TestRateLimiter_Middleware_DifferentCFIPs(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_IgnoresProxyHeadersUnlessTrusted(t *testing.T) {
+	rl := &RateLimiter{visitors: make(map[string]*visitor), rate: 0.001, burst: 1}
+	handler := rl.Middleware(okHandler())
+	// Same TCP peer, a different spoofed header on every request: one bucket.
+	for i, ip := range []string{"10.0.0.1", "10.0.0.2"} {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = "198.51.100.7:4000"
+		req.Header.Set("CF-Connecting-IP", ip)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("request %d: status %d, want %d (spoofed header must not reset the bucket)", i, w.Code, want)
+		}
+	}
+}
+
+func TestRateLimiter_KeysByHostNotPort(t *testing.T) {
+	rl := &RateLimiter{visitors: make(map[string]*visitor), rate: 0.001, burst: 1}
+	handler := rl.Middleware(okHandler())
+	codes := []int{}
+	for _, addr := range []string{"198.51.100.7:4000", "198.51.100.7:4001"} {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = addr
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		codes = append(codes, w.Code)
+	}
+	if codes[1] != http.StatusTooManyRequests {
+		t.Fatalf("new source port got a fresh bucket: %v", codes)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "[2001:db8::1]:443"
+	req.Header.Set("X-Real-IP", "203.0.113.9")
+	if got := ClientIP(req, false); got != "2001:db8::1" {
+		t.Errorf("untrusted: %q", got)
+	}
+	if got := ClientIP(req, true); got != "203.0.113.9" {
+		t.Errorf("trusted: %q", got)
+	}
+	req.Header.Set("X-Real-IP", "not-an-ip")
+	if got := ClientIP(req, true); got != "2001:db8::1" {
+		t.Errorf("invalid header should fall back to peer: %q", got)
+	}
+}
+
 func TestNewRateLimiter(t *testing.T) {
-	rl := NewRateLimiter(10.0, 5)
+	rl := NewRateLimiter(10.0, 5, false)
 	if rl == nil {
 		t.Fatal("expected non-nil rate limiter")
 	}
@@ -921,5 +975,50 @@ func TestGetAPIKey_ValidContext(t *testing.T) {
 		if akc.Scopes[i] != s {
 			t.Errorf("expected scope[%d]=%s, got %s", i, s, akc.Scopes[i])
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JWT hardening
+// ---------------------------------------------------------------------------
+
+func TestRequireAuth_RejectsWeakTokens(t *testing.T) {
+	const secret = "jwt-hardening-test-secret-0123456789abcdef"
+	sub := "11111111-1111-1111-1111-111111111111"
+	sign := func(method jwt.SigningMethod, claims jwt.MapClaims, key any) string {
+		s, err := jwt.NewWithClaims(method, claims).SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	future := time.Now().Add(time.Hour).Unix()
+	none, _ := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"sub": sub, "exp": future}).
+		SignedString(jwt.UnsafeAllowNoneSignatureType)
+
+	tests := []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"valid HS256", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future}, []byte(secret)), http.StatusOK},
+		{"alg none", none, http.StatusUnauthorized},
+		{"HS512 with right key", sign(jwt.SigningMethodHS512, jwt.MapClaims{"sub": sub, "exp": future}, []byte(secret)), http.StatusUnauthorized},
+		{"missing exp", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub}, []byte(secret)), http.StatusUnauthorized},
+		{"expired", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": time.Now().Add(-time.Minute).Unix()}, []byte(secret)), http.StatusUnauthorized},
+		{"issued in the future", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future, "iat": future}, []byte(secret)), http.StatusUnauthorized},
+		{"wrong key", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future}, []byte("another-secret-of-sufficient-length-000")), http.StatusUnauthorized},
+	}
+	h := RequireAuth(secret)(okHandler())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != tt.want {
+				t.Fatalf("status %d, want %d", w.Code, tt.want)
+			}
+		})
 	}
 }

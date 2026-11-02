@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -16,9 +17,15 @@ type Config struct {
 	JWT         JWTConfig
 	OAuth       OAuthConfig
 	TokenEncKey string // Hex-encoded 32-byte key for AES-256-GCM token encryption
-	Claude      ClaudeConfig
-	Publish     PublishConfig
-	DevAdmin    DevAdminConfig
+	// TokenEncKeysPrevious are retired keys still accepted for decryption
+	// during a key rotation (TOKEN_ENCRYPTION_KEY_PREVIOUS, comma-separated).
+	TokenEncKeysPrevious []string
+	// TrustProxyHeaders makes the rate limiter key clients by CF-Connecting-IP
+	// or X-Real-IP. Enable only behind a proxy that overwrites those headers.
+	TrustProxyHeaders bool
+	Claude            ClaudeConfig
+	Publish           PublishConfig
+	DevAdmin          DevAdminConfig
 }
 
 // PublishConfig controls outbound publishing to social platforms.
@@ -105,7 +112,7 @@ type OAuthProviderConfig struct {
 func Load() *Config {
 	return &Config{
 		App: AppConfig{
-			Env:         envOrDefault("APP_ENV", "development"),
+			Env:         envOrDefault("APP_ENV", "production"),
 			Port:        envOrDefault("APP_PORT", "8081"),
 			Host:        envOrDefault("APP_HOST", "localhost"),
 			FrontendURL: envOrDefault("APP_FRONTEND_URL", "http://localhost:5173"),
@@ -135,7 +142,7 @@ func Load() *Config {
 			UseSSL:    envOrDefaultBool("S3_USE_SSL", false),
 		},
 		JWT: JWTConfig{
-			Secret:          envOrDefault("JWT_SECRET", "dev-jwt-secret-change-me-in-production"),
+			Secret:          envOrDefault("JWT_SECRET", devJWTSecret),
 			AccessTokenTTL:  envOrDefaultDuration("JWT_ACCESS_TOKEN_TTL", 15*time.Minute),
 			RefreshTokenTTL: envOrDefaultDuration("JWT_REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		},
@@ -171,7 +178,9 @@ func Load() *Config {
 				RedirectURL:  envOrDefault("THREADS_REDIRECT_URL", "http://localhost:8081/api/v1/admin/channels/oauth/threads/callback"),
 			},
 		},
-		TokenEncKey: envOrDefault("TOKEN_ENCRYPTION_KEY", ""),
+		TokenEncKey:          envOrDefault("TOKEN_ENCRYPTION_KEY", ""),
+		TokenEncKeysPrevious: envList("TOKEN_ENCRYPTION_KEY_PREVIOUS"),
+		TrustProxyHeaders:    envOrDefaultBool("TRUST_PROXY_HEADERS", false),
 		Claude: ClaudeConfig{
 			APIKey: envOrDefault("CLAUDE_API_KEY", ""),
 		},
@@ -185,43 +194,94 @@ func Load() *Config {
 	}
 }
 
+// devJWTSecret is the fallback used when JWT_SECRET is unset. It is public
+// (it is in this file), so it is only accepted in development.
+const devJWTSecret = "dev-jwt-secret-change-me-in-production"
+
+// MinJWTSecretLen is the minimum HMAC key length accepted at startup.
+const MinJWTSecretLen = 32
+
+// IsDev reports whether the service runs in development mode. Development is
+// opt-in: any APP_ENV other than "development" (including unset) is treated
+// as production and gets the strict checks in Validate.
 func (c *Config) IsDev() bool {
 	return c.App.Env == "development"
 }
 
+// IsProd is the inverse of IsDev.
 func (c *Config) IsProd() bool {
-	return c.App.Env == "production"
+	return !c.IsDev()
 }
 
+// Validate checks the configuration at startup. Every binary calls it and
+// exits on error. Some checks apply in all modes; the rest apply whenever
+// APP_ENV is not "development".
 func (c *Config) Validate() error {
-	if !c.IsProd() {
-		return nil // skip validation in development
-	}
-
 	var errs []string
 
-	if c.JWT.Secret == "dev-jwt-secret-change-me-in-production" || len(c.JWT.Secret) < 32 {
-		errs = append(errs, "JWT_SECRET must be set to a random string (min 32 chars)")
+	if len(c.JWT.Secret) < MinJWTSecretLen {
+		errs = append(errs, fmt.Sprintf("JWT_SECRET must be at least %d characters", MinJWTSecretLen))
+	}
+	if c.JWT.AccessTokenTTL <= 0 || c.JWT.RefreshTokenTTL <= 0 {
+		errs = append(errs, "JWT_ACCESS_TOKEN_TTL and JWT_REFRESH_TOKEN_TTL must be positive durations")
+	}
+	if c.TokenEncKey != "" {
+		if err := validateAESKey(c.TokenEncKey); err != nil {
+			errs = append(errs, "TOKEN_ENCRYPTION_KEY: "+err.Error())
+		}
+	}
+	for i, k := range c.TokenEncKeysPrevious {
+		if err := validateAESKey(k); err != nil {
+			errs = append(errs, fmt.Sprintf("TOKEN_ENCRYPTION_KEY_PREVIOUS[%d]: %s", i, err))
+		}
+	}
+	if c.App.FrontendURL == "*" {
+		errs = append(errs, "APP_FRONTEND_URL must be a single origin, not *")
 	}
 
-	if c.DB.SSLMode == "disable" {
-		errs = append(errs, "DB_SSLMODE must not be 'disable' in production")
-	}
-
-	if c.App.FrontendURL == "" || c.App.FrontendURL == "http://localhost:5173" {
-		errs = append(errs, "APP_FRONTEND_URL must be set to the production frontend domain")
-	}
-
-	if c.S3.Endpoint == "" || c.S3.Endpoint == "localhost:9000" {
-		errs = append(errs, "S3_ENDPOINT must be set for production storage")
+	if !c.IsDev() {
+		if c.JWT.Secret == devJWTSecret {
+			errs = append(errs, "JWT_SECRET must be set to a random value (the built-in development secret is public)")
+		}
+		if c.TokenEncKey == "" {
+			errs = append(errs, "TOKEN_ENCRYPTION_KEY is required outside development (64 hex chars, e.g. openssl rand -hex 32)")
+		}
+		if c.DB.SSLMode == "disable" {
+			errs = append(errs, "DB_SSLMODE must not be 'disable' outside development")
+		}
+		if c.App.FrontendURL == "" || c.App.FrontendURL == "http://localhost:5173" {
+			errs = append(errs, "APP_FRONTEND_URL must be set to the frontend origin")
+		}
+		if c.S3.Endpoint == "" || c.S3.Endpoint == "localhost:9000" {
+			errs = append(errs, "S3_ENDPOINT must be set for production storage")
+		}
+		if c.DevAdmin.Email != "" || c.DevAdmin.Password != "" {
+			errs = append(errs, "DEV_ADMIN_EMAIL/DEV_ADMIN_PASSWORD must not be set outside development; create accounts with cmd/admin")
+		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("production config validation failed:\n  - %s",
-			strings.Join(errs, "\n  - "))
+		return fmt.Errorf("invalid configuration (APP_ENV=%q):\n  - %s",
+			c.App.Env, strings.Join(errs, "\n  - "))
 	}
-
 	return nil
+}
+
+// validateAESKey checks a hex-encoded AES-256 key: 32 bytes, not all one value.
+func validateAESKey(hexKey string) error {
+	key, err := hex.DecodeString(hexKey)
+	if err != nil {
+		return fmt.Errorf("must be hex: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("must be 32 bytes (64 hex chars), got %d bytes", len(key))
+	}
+	for _, b := range key[1:] {
+		if b != key[0] {
+			return nil
+		}
+	}
+	return fmt.Errorf("must be random, not a repeated byte")
 }
 
 func envOrDefault(key, fallback string) string {
@@ -256,4 +316,15 @@ func envOrDefaultDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+// envList reads a comma-separated list, dropping empty items.
+func envList(key string) []string {
+	var out []string
+	for _, v := range strings.Split(os.Getenv(key), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

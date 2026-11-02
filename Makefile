@@ -18,6 +18,7 @@ build: ## build all binaries into bin/
 	go build -o bin/migrate ./cmd/migrate
 	go build -o bin/worker ./cmd/worker
 	go build -o bin/thumbgen ./cmd/thumbgen
+	go build -o bin/admin ./cmd/admin
 
 # --- Quality ---
 test: ## run unit tests (DB-backed tests skip without a database)

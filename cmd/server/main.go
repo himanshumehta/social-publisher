@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,9 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/himanshumehta/social-publisher/internal/app"
 
-	"github.com/himanshumehta/social-publisher/internal/config"
 	"github.com/himanshumehta/social-publisher/internal/database"
 	"github.com/himanshumehta/social-publisher/internal/infra"
 	"github.com/himanshumehta/social-publisher/internal/router"
@@ -21,17 +19,9 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	logger := app.NewLogger()
 
-	cfg := config.Load()
-
-	if err := cfg.Validate(); err != nil {
-		slog.Error("invalid configuration", "error", err)
-		os.Exit(1)
-	}
+	cfg := app.MustLoadConfig()
 
 	// Database
 	pool, err := database.Connect(cfg.DB)
@@ -42,16 +32,7 @@ func main() {
 	defer pool.Close()
 	slog.Info("connected to database", "database", cfg.DB.Name)
 
-	// Redis
-	redisOpts := &redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	}
-	if cfg.Redis.TLS {
-		redisOpts.TLSConfig = &tls.Config{}
-	}
-	rdb := redis.NewClient(redisOpts)
+	rdb := app.NewRedis(cfg.Redis)
 	defer rdb.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

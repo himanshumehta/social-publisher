@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -11,18 +13,26 @@ type visitor struct {
 	lastSeen time.Time
 }
 
+// RateLimiter is an in-memory token bucket per client IP. State is per
+// process: with several API replicas each enforces its own budget.
 type RateLimiter struct {
-	mu       sync.Mutex
-	visitors map[string]*visitor
-	rate     float64 // tokens per second
-	burst    float64 // max tokens
+	mu         sync.Mutex
+	visitors   map[string]*visitor
+	rate       float64 // tokens per second
+	burst      float64 // max tokens
+	trustProxy bool
 }
 
-func NewRateLimiter(rate float64, burst int) *RateLimiter {
+// NewRateLimiter allows rate requests per second per client with the given
+// burst. With trustProxy the client is identified by CF-Connecting-IP or
+// X-Real-IP; only enable that behind a proxy that overwrites those headers,
+// otherwise any client can pick its own bucket.
+func NewRateLimiter(rate float64, burst int, trustProxy bool) *RateLimiter {
 	rl := &RateLimiter{
-		visitors: make(map[string]*visitor),
-		rate:     rate,
-		burst:    float64(burst),
+		visitors:   make(map[string]*visitor),
+		rate:       rate,
+		burst:      float64(burst),
+		trustProxy: trustProxy,
 	}
 	go rl.cleanup()
 	return rl
@@ -65,13 +75,27 @@ func (rl *RateLimiter) allow(ip string) bool {
 	return true
 }
 
+// ClientIP returns the address used to key rate limits: the TCP peer address
+// without its port, or a proxy-supplied header when trustProxy is set.
+func ClientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		for _, h := range []string{"CF-Connecting-IP", "X-Real-IP"} {
+			if v := strings.TrimSpace(r.Header.Get(h)); v != "" && net.ParseIP(v) != nil {
+				return v
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if fwd := r.Header.Get("CF-Connecting-IP"); fwd != "" {
-			ip = fwd
-		}
-		if !rl.allow(ip) {
+		if !rl.allow(ClientIP(r, rl.trustProxy)) {
+			w.Header().Set("Retry-After", "60")
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 			return
 		}

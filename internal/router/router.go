@@ -35,6 +35,20 @@ type Route struct {
 	Handler http.HandlerFunc
 }
 
+const (
+	apiRatePerSecond  = 10 // per client IP, all routes
+	apiBurst          = 30
+	authRatePerSecond = 10.0 / 60 // per client IP on credential routes: 10/min
+	authBurst         = 5
+)
+
+// credentialRoutes accept secrets (passwords, refresh tokens) and get the
+// stricter auth rate limit.
+var credentialRoutes = map[string]bool{
+	"POST /api/v1/auth/login":   true,
+	"POST /api/v1/auth/refresh": true,
+}
+
 // Routes returns the complete API surface.
 func Routes(h *handler.Handler, hh *handler.HealthHandler) []Route {
 	return []Route{
@@ -137,6 +151,10 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 	adminMw := middleware.RequireRole("admin", "super_admin")
 	apiKeyMw := middleware.RequireAPIKey(apiKeys)
 
+	// Credential endpoints get a much smaller budget than the API as a whole
+	// to slow password guessing and refresh-token probing.
+	authLimiter := middleware.NewRateLimiter(authRatePerSecond, authBurst, cfg.TrustProxyHeaders)
+
 	mux := http.NewServeMux()
 	for _, rt := range routes {
 		var hnd http.Handler = rt.Handler
@@ -148,6 +166,9 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 		case APIKey:
 			hnd = apiKeyMw(hnd)
 		}
+		if credentialRoutes[rt.Pattern] {
+			hnd = authLimiter.Middleware(hnd)
+		}
 		mux.Handle(rt.Pattern, hnd)
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +177,7 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
-	rl := middleware.NewRateLimiter(10, 30) // 10 req/s, burst 30
+	rl := middleware.NewRateLimiter(apiRatePerSecond, apiBurst, cfg.TrustProxyHeaders)
 
 	var chain http.Handler = mux
 	chain = rl.Middleware(chain)

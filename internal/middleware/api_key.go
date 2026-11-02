@@ -2,8 +2,6 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -49,10 +47,11 @@ func RequireAPIKey(apiKeySvc *service.APIKeyService) func(http.Handler) http.Han
 			}
 
 			rawKey := strings.TrimPrefix(auth, "Bearer ")
-			keyHash := sha256.Sum256([]byte(rawKey))
-			hash := hex.EncodeToString(keyHash[:])
-
-			apiKey, err := apiKeySvc.ValidateKey(r.Context(), hash)
+			if apiKeySvc == nil {
+				http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
+				return
+			}
+			apiKey, err := apiKeySvc.ValidateKey(r.Context(), service.HashAPIKey(rawKey))
 			if err != nil {
 				http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
 				return

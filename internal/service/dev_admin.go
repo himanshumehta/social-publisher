@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // EnsureDevAdmin creates (or resets the password of) a local admin account so a
@@ -17,7 +16,7 @@ func EnsureDevAdmin(ctx context.Context, pool *pgxpool.Pool, email, password str
 	if email == "" || password == "" {
 		return fmt.Errorf("dev admin email and password are required")
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := HashPassword(password)
 	if err != nil {
 		return fmt.Errorf("hash dev admin password: %w", err)
 	}
@@ -29,7 +28,7 @@ func EnsureDevAdmin(ctx context.Context, pool *pgxpool.Pool, email, password str
 			role = 'admin',
 			is_active = TRUE,
 			updated_at = NOW()`,
-		email, string(hash),
+		email, hash,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert dev admin: %w", err)

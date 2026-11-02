@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/himanshumehta/social-publisher/internal/config"
 	"github.com/himanshumehta/social-publisher/internal/model"
@@ -51,13 +51,14 @@ func (s *AuthService) issueAccessToken(user *model.User) (string, time.Time, err
 	}
 
 	// Use MapClaims to add custom fields
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   claims.Subject,
-		"exp":   claims.ExpiresAt.Unix(),
-		"iat":   claims.IssuedAt.Unix(),
-		"email": user.Email,
-		"role":  string(user.Role),
-	})
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, // must match middleware.SigningMethod
+		jwt.MapClaims{
+			"sub":   claims.Subject,
+			"exp":   claims.ExpiresAt.Unix(),
+			"iat":   claims.IssuedAt.Unix(),
+			"email": user.Email,
+			"role":  string(user.Role),
+		})
 
 	signed, err := token.SignedString(s.jwtSecret)
 	if err != nil {
@@ -171,7 +172,7 @@ type LoginRequest struct {
 func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*TokenPair, *model.User, error) {
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	if email == "" || req.Password == "" {
-		return nil, nil, fmt.Errorf("email and password are required")
+		return nil, nil, ErrInvalidCredentials
 	}
 
 	var user model.User
@@ -185,8 +186,9 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*TokenPair, 
 		&bio, &phone, &passwordHash,
 		&user.Role, &user.IsActive, &user.IsOnboarded,
 		&user.LastLoginAt, &user.CreatedAt, &user.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return nil, nil, fmt.Errorf("invalid email or password")
+	if errors.Is(err, pgx.ErrNoRows) {
+		checkPassword(nil, req.Password) // same cost as a real comparison
+		return nil, nil, ErrInvalidCredentials
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("lookup user: %w", err)
@@ -204,16 +206,8 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*TokenPair, 
 		user.Phone = *phone
 	}
 
-	if passwordHash == nil || *passwordHash == "" {
-		return nil, nil, fmt.Errorf("this account uses Google sign-in")
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(*passwordHash), []byte(req.Password)); err != nil {
-		return nil, nil, fmt.Errorf("invalid email or password")
-	}
-
-	if !user.IsActive {
-		return nil, nil, fmt.Errorf("account is deactivated")
+	if !checkPassword(passwordHash, req.Password) || !user.IsActive {
+		return nil, nil, ErrInvalidCredentials
 	}
 
 	// Update last login

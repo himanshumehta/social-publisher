@@ -176,3 +176,20 @@ func TestUnknownRouteIsJSON404(t *testing.T) {
 		t.Fatalf("got %d %q", w.Code, w.Body.String())
 	}
 }
+
+func TestCredentialRoutesHaveStricterRateLimit(t *testing.T) {
+	h := build(testConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), stubbedRoutes(), nil)
+	// Login and refresh share one per-IP credential budget.
+	for n, pattern := range []string{"POST /api/v1/auth/login", "POST /api/v1/auth/refresh"} {
+		var codes []int
+		for i := 0; i < authBurst+1; i++ {
+			method, path, _ := strings.Cut(pattern, " ")
+			r := httptest.NewRequest(method, path, nil)
+			r.RemoteAddr = fmt.Sprintf("203.0.113.%d:5555", 50+n)
+			codes = append(codes, serve(h, r))
+		}
+		if codes[authBurst-1] != reachedStatus || codes[authBurst] != http.StatusTooManyRequests {
+			t.Errorf("%s: statuses %v, want %d allowed then 429", pattern, codes, authBurst)
+		}
+	}
+}

@@ -6,17 +6,16 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
+	"github.com/himanshumehta/social-publisher/internal/app"
 
-	"github.com/himanshumehta/social-publisher/internal/config"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/himanshumehta/social-publisher/internal/database"
 	"github.com/himanshumehta/social-publisher/internal/infra"
 	"github.com/himanshumehta/social-publisher/internal/service"
@@ -32,12 +31,9 @@ const (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	logger := app.NewLogger()
 
-	cfg := config.Load()
+	cfg := app.MustLoadConfig()
 
 	slog.Info("worker starting")
 
@@ -49,15 +45,7 @@ func main() {
 	defer pool.Close()
 	slog.Info("connected to database", "database", cfg.DB.Name)
 
-	redisOpts := &redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	}
-	if cfg.Redis.TLS {
-		redisOpts.TLSConfig = &tls.Config{}
-	}
-	rdb := redis.NewClient(redisOpts)
+	rdb := app.NewRedis(cfg.Redis)
 	defer rdb.Close()
 
 	hotS3 := infra.NewS3Client(cfg.S3)

@@ -2,15 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+	"github.com/himanshumehta/social-publisher/internal/app"
 
-	"github.com/himanshumehta/social-publisher/internal/config"
+	"github.com/google/uuid"
+
 	"github.com/himanshumehta/social-publisher/internal/database"
 	"github.com/himanshumehta/social-publisher/internal/infra"
 	"github.com/himanshumehta/social-publisher/internal/service"
@@ -21,12 +20,9 @@ import (
 //        ./thumbgen <video-uuid>     (process a specific video)
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	app.NewLogger()
 
-	cfg := config.Load()
+	cfg := app.MustLoadConfig()
 
 	// Database
 	pool, err := database.Connect(cfg.DB)
@@ -36,16 +32,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Redis (needed for service init)
-	redisOpts := &redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	}
-	if cfg.Redis.TLS {
-		redisOpts.TLSConfig = &tls.Config{}
-	}
-	rdb := redis.NewClient(redisOpts)
+	rdb := app.NewRedis(cfg.Redis)
 	defer rdb.Close()
 
 	// S3
