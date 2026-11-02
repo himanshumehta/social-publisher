@@ -248,21 +248,6 @@ func (u *MetaContainerUploader) PublishContainer(
 	}, nil
 }
 
-// GetChannelToken is a convenience method for callers that need the access
-// token and user ID without going through the full Upload flow (e.g., the
-// polling/publish worker goroutine).
-func (u *MetaContainerUploader) GetChannelToken(ctx context.Context, channelID uuid.UUID, userIDField string) (token, userID string, err error) {
-	accessToken, _, metadata, err := u.getChannelTokens(ctx, channelID)
-	if err != nil {
-		return "", "", fmt.Errorf("get channel tokens: %w", err)
-	}
-	uid, err := extractMetadataField(metadata, userIDField)
-	if err != nil {
-		return "", "", fmt.Errorf("extract %s: %w", userIDField, err)
-	}
-	return accessToken, uid, nil
-}
-
 // --- private helpers ---
 
 // getChannelTokens retrieves and decrypts channel credentials from the database.

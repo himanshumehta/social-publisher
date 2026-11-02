@@ -13,14 +13,8 @@ type Config struct {
 	DB          DBConfig
 	Redis       RedisConfig
 	S3          S3Config
-	S3Cold      S3Config
 	JWT         JWTConfig
 	OAuth       OAuthConfig
-	Platform    PlatformConfig
-	Volume      VolumeConfig
-	SMTP        SMTPConfig
-	Upload      UploadConfig
-	Quota       QuotaConfig
 	TokenEncKey string // Hex-encoded 32-byte key for AES-256-GCM token encryption
 	Claude      ClaudeConfig
 	Publish     PublishConfig
@@ -50,8 +44,6 @@ type AppConfig struct {
 	Env         string
 	Port        string
 	Host        string
-	Secret      string
-	BaseURL     string
 	FrontendURL string
 }
 
@@ -101,22 +93,7 @@ type OAuthConfig struct {
 	Instagram OAuthProviderConfig // Instagram Business Login (separate from Facebook flow)
 	LinkedIn  OAuthProviderConfig
 	Twitter   OAuthProviderConfig
-	Threads   ThreadsConfig
-}
-
-type ThreadsConfig struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
-}
-
-type UploadConfig struct {
-	MaxSizeMB   int
-	ChunkSizeMB int
-}
-
-type QuotaConfig struct {
-	YouTubeDailyUnits int
+	Threads   OAuthProviderConfig
 }
 
 type OAuthProviderConfig struct {
@@ -125,32 +102,12 @@ type OAuthProviderConfig struct {
 	RedirectURL  string
 }
 
-type PlatformConfig struct {
-	FeePercent     int
-	TDSRatePercent int
-}
-
-type VolumeConfig struct {
-	Path string
-}
-
-type SMTPConfig struct {
-	Host     string
-	Port     string
-	Username string
-	Password string
-	From     string
-	UseTLS   bool
-}
-
 func Load() *Config {
 	return &Config{
 		App: AppConfig{
 			Env:         envOrDefault("APP_ENV", "development"),
 			Port:        envOrDefault("APP_PORT", "8081"),
 			Host:        envOrDefault("APP_HOST", "localhost"),
-			Secret:      envOrDefault("APP_SECRET", "dev-secret-change-me-in-production"),
-			BaseURL:     envOrDefault("APP_BASE_URL", "http://localhost:8081"),
 			FrontendURL: envOrDefault("APP_FRONTEND_URL", "http://localhost:5173"),
 		},
 		DB: DBConfig{
@@ -176,14 +133,6 @@ func Load() *Config {
 			Bucket:    envOrDefault("S3_BUCKET", "social-publisher-hot"),
 			Region:    envOrDefault("S3_REGION", "us-east-1"),
 			UseSSL:    envOrDefaultBool("S3_USE_SSL", false),
-		},
-		S3Cold: S3Config{
-			Endpoint:  envOrDefault("S3_COLD_ENDPOINT", envOrDefault("S3_ENDPOINT", "localhost:9000")),
-			AccessKey: envOrDefault("S3_COLD_ACCESS_KEY", envOrDefault("S3_ACCESS_KEY", "minioadmin")),
-			SecretKey: envOrDefault("S3_COLD_SECRET_KEY", envOrDefault("S3_SECRET_KEY", "minioadmin")),
-			Bucket:    envOrDefault("S3_COLD_BUCKET", "social-publisher-cold"),
-			Region:    envOrDefault("S3_COLD_REGION", envOrDefault("S3_REGION", "us-east-1")),
-			UseSSL:    envOrDefaultBool("S3_COLD_USE_SSL", envOrDefaultBool("S3_USE_SSL", false)),
 		},
 		JWT: JWTConfig{
 			Secret:          envOrDefault("JWT_SECRET", "dev-jwt-secret-change-me-in-production"),
@@ -216,25 +165,11 @@ func Load() *Config {
 				ClientSecret: envOrDefault("TWITTER_CLIENT_SECRET", ""),
 				RedirectURL:  envOrDefault("TWITTER_REDIRECT_URL", "http://localhost:8081/api/v1/admin/channels/oauth/twitter/callback"),
 			},
-			Threads: ThreadsConfig{
+			Threads: OAuthProviderConfig{
 				ClientID:     envOrDefault("THREADS_CLIENT_ID", ""),
 				ClientSecret: envOrDefault("THREADS_CLIENT_SECRET", ""),
 				RedirectURL:  envOrDefault("THREADS_REDIRECT_URL", "http://localhost:8081/api/v1/admin/channels/oauth/threads/callback"),
 			},
-		},
-		Platform: PlatformConfig{
-			FeePercent:     envOrDefaultInt("PLATFORM_FEE_PERCENT", 30),
-			TDSRatePercent: envOrDefaultInt("PLATFORM_TDS_RATE_PERCENT", 10),
-		},
-		Volume: VolumeConfig{
-			Path: envOrDefault("VOLUME_PATH", "/tmp/social-publisher-workspace"),
-		},
-		Upload: UploadConfig{
-			MaxSizeMB:   envOrDefaultInt("MAX_UPLOAD_SIZE_MB", 5120),
-			ChunkSizeMB: envOrDefaultInt("UPLOAD_CHUNK_SIZE_MB", 10),
-		},
-		Quota: QuotaConfig{
-			YouTubeDailyUnits: envOrDefaultInt("YOUTUBE_DAILY_QUOTA", 10000),
 		},
 		TokenEncKey: envOrDefault("TOKEN_ENCRYPTION_KEY", ""),
 		Claude: ClaudeConfig{
@@ -246,14 +181,6 @@ func Load() *Config {
 		DevAdmin: DevAdminConfig{
 			Email:    envOrDefault("DEV_ADMIN_EMAIL", ""),
 			Password: envOrDefault("DEV_ADMIN_PASSWORD", ""),
-		},
-		SMTP: SMTPConfig{
-			Host:     envOrDefault("SMTP_HOST", ""),
-			Port:     envOrDefault("SMTP_PORT", "587"),
-			Username: envOrDefault("SMTP_USERNAME", ""),
-			Password: envOrDefault("SMTP_PASSWORD", ""),
-			From:     envOrDefault("SMTP_FROM", "noreply@example.com"),
-			UseTLS:   envOrDefaultBool("SMTP_USE_TLS", true),
 		},
 	}
 }
@@ -273,20 +200,12 @@ func (c *Config) Validate() error {
 
 	var errs []string
 
-	if c.App.Secret == "dev-secret-change-me-in-production" || len(c.App.Secret) < 32 {
-		errs = append(errs, "APP_SECRET must be set to a random string (min 32 chars)")
-	}
-
 	if c.JWT.Secret == "dev-jwt-secret-change-me-in-production" || len(c.JWT.Secret) < 32 {
 		errs = append(errs, "JWT_SECRET must be set to a random string (min 32 chars)")
 	}
 
 	if c.DB.SSLMode == "disable" {
 		errs = append(errs, "DB_SSLMODE must not be 'disable' in production")
-	}
-
-	if c.App.BaseURL == "" || c.App.BaseURL == "http://localhost:8081" {
-		errs = append(errs, "APP_BASE_URL must be set to the production domain")
 	}
 
 	if c.App.FrontendURL == "" || c.App.FrontendURL == "http://localhost:5173" {

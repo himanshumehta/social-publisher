@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/model"
@@ -40,17 +39,4 @@ func (s *CategoryService) List(ctx context.Context) ([]model.Category, error) {
 		return nil, fmt.Errorf("iterating categories: %w", err)
 	}
 	return categories, nil
-}
-
-func (s *CategoryService) GetByID(ctx context.Context, id uuid.UUID) (*model.Category, error) {
-	var c model.Category
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, slug, COALESCE(description, ''), COALESCE(icon_url, ''), is_active, display_order, created_at, updated_at
-		 FROM categories WHERE id = $1`, id,
-	).Scan(&c.ID, &c.Name, &c.Slug, &c.Description, &c.IconURL,
-		&c.IsActive, &c.DisplayOrder, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("category not found")
-	}
-	return &c, nil
 }

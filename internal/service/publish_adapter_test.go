@@ -63,8 +63,8 @@ func TestPostPublisher_EnableDryRun_BindsEveryPlatform(t *testing.T) {
 	}
 
 	pp.EnableDryRun()
-	if !pp.IsDryRun() {
-		t.Fatal("IsDryRun() = false after EnableDryRun")
+	if !pp.dryRun {
+		t.Fatal("dryRun = false after EnableDryRun")
 	}
 	for _, p := range SupportedPostPlatforms {
 		if _, ok := pp.adapters[p].(DryRunAdapter); !ok {

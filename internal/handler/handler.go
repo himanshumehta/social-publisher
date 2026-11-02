@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
 	"github.com/himanshumehta/social-publisher/internal/config"
+	"github.com/himanshumehta/social-publisher/internal/middleware"
 	"github.com/himanshumehta/social-publisher/internal/service"
 )
 
@@ -33,6 +35,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+func userIDFromRequest(r *http.Request) (uuid.UUID, bool) {
+	return middleware.UserIDFromContext(r.Context())
 }
 
 // requireUserID extracts the authenticated user ID from the request context.

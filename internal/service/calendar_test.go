@@ -12,15 +12,6 @@ import (
 	"github.com/himanshumehta/social-publisher/internal/model"
 )
 
-// createTestUserForCalendar is a helper that creates a user and returns cleanup func.
-func createTestUserForCalendar(t *testing.T, ctx context.Context, pool interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (interface{ RowsAffected() int64 }, error)
-}) uuid.UUID {
-	t.Helper()
-	// This is inlined below since the pool type from setupTestPool is *pgxpool.Pool
-	return uuid.Nil // placeholder; real helper below
-}
-
 // helper creates a test user + post, returns (userID, postID, cleanup)
 func createSchedulablePost(t *testing.T, status string) (context.Context, *CalendarService, *PostService, uuid.UUID, uuid.UUID, func()) {
 	t.Helper()
@@ -134,57 +125,6 @@ func TestSchedulePost_WrongUser(t *testing.T) {
 	err := calSvc.SchedulePost(ctx, otherUser, postID, futureTime, "UTC")
 	if err == nil {
 		t.Fatal("expected error when wrong user schedules post, got nil")
-	}
-}
-
-func TestReschedulePost_Success(t *testing.T) {
-	ctx, calSvc, postSvc, userID, postID, cleanup := createSchedulablePost(t, "draft")
-	defer cleanup()
-
-	// First schedule
-	futureTime := time.Now().UTC().Add(24 * time.Hour)
-	err := calSvc.SchedulePost(ctx, userID, postID, futureTime, "UTC")
-	if err != nil {
-		t.Fatalf("SchedulePost failed: %v", err)
-	}
-
-	// Reschedule to later
-	newTime := time.Now().UTC().Add(48 * time.Hour)
-	err = calSvc.ReschedulePost(ctx, userID, postID, newTime, "Europe/London")
-	if err != nil {
-		t.Fatalf("ReschedulePost failed: %v", err)
-	}
-
-	post, err := postSvc.GetByID(ctx, postID, userID, true)
-	if err != nil {
-		t.Fatalf("GetByID after reschedule failed: %v", err)
-	}
-
-	if post.Status != "scheduled" {
-		t.Errorf("expected status 'scheduled', got %q", post.Status)
-	}
-	if post.Timezone != "Europe/London" {
-		t.Errorf("expected timezone 'Europe/London', got %q", post.Timezone)
-	}
-	// Verify the time changed (within 1 second tolerance)
-	if post.ScheduledAt == nil {
-		t.Fatal("expected scheduled_at to be set")
-	}
-	diff := post.ScheduledAt.Sub(newTime)
-	if diff < -time.Second || diff > time.Second {
-		t.Errorf("expected scheduled_at ~%v, got %v", newTime, *post.ScheduledAt)
-	}
-}
-
-func TestReschedulePost_NotScheduled(t *testing.T) {
-	ctx, calSvc, _, userID, postID, cleanup := createSchedulablePost(t, "draft")
-	defer cleanup()
-
-	newTime := time.Now().UTC().Add(48 * time.Hour)
-
-	err := calSvc.ReschedulePost(ctx, userID, postID, newTime, "UTC")
-	if err == nil {
-		t.Fatal("expected error when rescheduling a non-scheduled post, got nil")
 	}
 }
 

@@ -8,24 +8,6 @@ import (
 	"github.com/himanshumehta/social-publisher/internal/model"
 )
 
-// ListProjectPosts handles GET /api/v1/projects/{id}/posts
-func (h *Handler) ListProjectPosts(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := h.requirePathUUID(w, r, "id", "project ID")
-	if !ok {
-		return
-	}
-
-	posts, err := h.services.Post.ListByProject(r.Context(), projectID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data": posts,
-	})
-}
-
 // CreatePost handles POST /api/v1/posts
 func (h *Handler) CreatePost(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.requireUserID(w, r)

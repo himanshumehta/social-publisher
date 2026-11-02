@@ -34,12 +34,6 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.JWT.RefreshTokenTTL != 30*24*time.Hour {
 		t.Errorf("expected 30d refresh TTL, got %v", cfg.JWT.RefreshTokenTTL)
 	}
-	if cfg.Platform.FeePercent != 30 {
-		t.Errorf("expected 30%% fee, got %d", cfg.Platform.FeePercent)
-	}
-	if cfg.Platform.TDSRatePercent != 10 {
-		t.Errorf("expected 10%% TDS, got %d", cfg.Platform.TDSRatePercent)
-	}
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
@@ -48,7 +42,6 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	os.Setenv("APP_PORT", "9090")
 	os.Setenv("DB_HOST", "db.example.com")
 	os.Setenv("REDIS_DB", "3")
-	os.Setenv("PLATFORM_FEE_PERCENT", "25")
 	defer os.Clearenv()
 
 	cfg := Load()
@@ -63,9 +56,6 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if cfg.Redis.DB != 3 {
 		t.Errorf("expected Redis DB 3, got %d", cfg.Redis.DB)
-	}
-	if cfg.Platform.FeePercent != 25 {
-		t.Errorf("expected 25%% fee, got %d", cfg.Platform.FeePercent)
 	}
 }
 
@@ -121,8 +111,6 @@ func TestValidate_ProdAcceptsGoodConfig(t *testing.T) {
 	cfg := &Config{
 		App: AppConfig{
 			Env:         "production",
-			Secret:      "a-very-long-production-secret-that-is-at-least-32-chars",
-			BaseURL:     "https://publisher.example.com",
 			FrontendURL: "https://publisher.example.com",
 		},
 		DB: DBConfig{SSLMode: "require"},

@@ -62,15 +62,10 @@ func main() {
 		slog.Info("connected to redis")
 	}
 
-	// S3 Clients
 	s3Client := infra.NewS3Client(cfg.S3)
-	slog.Info("s3 hot client initialized", "endpoint", cfg.S3.Endpoint, "bucket", cfg.S3.Bucket)
+	slog.Info("s3 client initialized", "endpoint", cfg.S3.Endpoint, "bucket", cfg.S3.Bucket)
 
-	s3ColdClient := infra.NewS3Client(cfg.S3Cold)
-	slog.Info("s3 cold client initialized", "endpoint", cfg.S3Cold.Endpoint, "bucket", cfg.S3Cold.Bucket)
-
-	// Services
-	svc := service.New(cfg, pool, rdb, s3Client, s3ColdClient)
+	svc := service.New(cfg, pool, rdb, s3Client)
 
 	// Dev-only: bootstrap a local admin so the API can be used without signup/OAuth.
 	if cfg.IsDev() && cfg.DevAdmin.Email != "" && cfg.DevAdmin.Password != "" {

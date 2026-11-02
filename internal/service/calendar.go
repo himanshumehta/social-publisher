@@ -155,58 +155,6 @@ func (s *CalendarService) SchedulePost(ctx context.Context, userID, postID uuid.
 	return tx.Commit(ctx)
 }
 
-// ReschedulePost changes the scheduled time of an already-scheduled post.
-func (s *CalendarService) ReschedulePost(ctx context.Context, userID, postID uuid.UUID, scheduledAt time.Time, timezone string) error {
-	if scheduledAt.Before(time.Now().UTC()) {
-		return fmt.Errorf("scheduled_at must be in the future")
-	}
-
-	if timezone == "" {
-		timezone = "UTC"
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	var currentStatus string
-	var authorID uuid.UUID
-	err = tx.QueryRow(ctx,
-		"SELECT status, author_id FROM posts WHERE id = $1 FOR UPDATE",
-		postID,
-	).Scan(&currentStatus, &authorID)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("post not found")
-		}
-		return fmt.Errorf("query post: %w", err)
-	}
-
-	if authorID != userID {
-		return fmt.Errorf("post not found")
-	}
-
-	if currentStatus != "scheduled" {
-		return fmt.Errorf("post is not scheduled (current status: '%s')", currentStatus)
-	}
-
-	_, err = tx.Exec(ctx, `
-		UPDATE posts
-		SET scheduled_at = $2,
-			timezone = $3,
-			updated_at = NOW()
-		WHERE id = $1`,
-		postID, scheduledAt, timezone,
-	)
-	if err != nil {
-		return fmt.Errorf("update post schedule: %w", err)
-	}
-
-	return tx.Commit(ctx)
-}
-
 // UnschedulePost reverts a scheduled post back to its pre-schedule status
 // and clears the scheduled_at time.
 func (s *CalendarService) UnschedulePost(ctx context.Context, userID, postID uuid.UUID) error {

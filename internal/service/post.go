@@ -40,91 +40,6 @@ func NewPostService(
 	}
 }
 
-// ListByProject returns all posts for a given project.
-func (s *PostService) ListByProject(ctx context.Context, projectID uuid.UUID) ([]model.Post, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, category_id, project_id, author_id, title, slug, content, excerpt,
-			cover_image_url, subject_name, subject_type, source_url, source_metadata,
-			ai_provider, ai_model, ai_prompt, ai_generated_at, is_ai_generated,
-			platform_posts, target_platforms, linked_video_url, linked_video_id,
-			tone, brand_voice, system_review_status, system_review_notes, system_review_at,
-			status, error_message, retry_count, processing_started_at, auto_publish,
-			publish_results, meta_title, meta_description, tags, published_at,
-			created_at, updated_at
-		FROM posts WHERE project_id = $1
-		ORDER BY created_at DESC`, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("query posts by project: %w", err)
-	}
-	defer rows.Close()
-
-	var posts []model.Post
-	for rows.Next() {
-		post := model.Post{}
-		var sourceMetadataJSON, platformPostsJSON, publishResultsJSON []byte
-		var (
-			content, excerpt, coverImageURL     *string
-			subjectName, subjectType, sourceURL *string
-			aiProvider, aiModel, aiPrompt       *string
-			linkedVideoURL                      *string
-			brandVoice, systemReviewNotes       *string
-			errorMessage                        *string
-			metaTitle, metaDescription          *string
-		)
-		err := rows.Scan(
-			&post.ID, &post.CategoryID, &post.ProjectID, &post.AuthorID,
-			&post.Title, &post.Slug, &content, &excerpt,
-			&coverImageURL, &subjectName, &subjectType,
-			&sourceURL, &sourceMetadataJSON,
-			&aiProvider, &aiModel, &aiPrompt, &post.AIGeneratedAt,
-			&post.IsAIGenerated, &platformPostsJSON, &post.TargetPlatforms,
-			&linkedVideoURL, &post.LinkedVideoID,
-			&post.Tone, &brandVoice,
-			&post.SystemReviewStatus, &systemReviewNotes, &post.SystemReviewAt,
-			&post.Status, &errorMessage, &post.RetryCount,
-			&post.ProcessingStartedAt, &post.AutoPublish,
-			&publishResultsJSON,
-			&metaTitle, &metaDescription, &post.Tags, &post.PublishedAt,
-			&post.CreatedAt, &post.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan post: %w", err)
-		}
-		post.Content = derefStr(content)
-		post.Excerpt = derefStr(excerpt)
-		post.CoverImageURL = derefStr(coverImageURL)
-		post.SubjectName = derefStr(subjectName)
-		post.SubjectType = derefStr(subjectType)
-		post.SourceURL = derefStr(sourceURL)
-		post.AIProvider = derefStr(aiProvider)
-		post.AIModel = derefStr(aiModel)
-		post.AIPrompt = derefStr(aiPrompt)
-		post.LinkedVideoURL = derefStr(linkedVideoURL)
-		post.BrandVoice = derefStr(brandVoice)
-		post.SystemReviewNotes = derefStr(systemReviewNotes)
-		post.ErrorMessage = derefStr(errorMessage)
-		post.MetaTitle = derefStr(metaTitle)
-		post.MetaDescription = derefStr(metaDescription)
-		if sourceMetadataJSON != nil {
-			json.Unmarshal(sourceMetadataJSON, &post.SourceMetadata)
-		}
-		if platformPostsJSON != nil {
-			json.Unmarshal(platformPostsJSON, &post.PlatformPosts)
-		}
-		if publishResultsJSON != nil {
-			json.Unmarshal(publishResultsJSON, &post.PublishResults)
-		}
-		posts = append(posts, post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating posts: %w", err)
-	}
-	if posts == nil {
-		posts = []model.Post{}
-	}
-	return posts, nil
-}
-
 // Create creates a new post and initiates the pipeline.
 func (s *PostService) Create(ctx context.Context, authorID uuid.UUID, req *model.CreatePostRequest) (*model.Post, error) {
 	if req.SourceURL == "" && req.Title == "" {
@@ -318,7 +233,6 @@ func (s *PostService) List(ctx context.Context, filter *model.PostListFilter, re
 	if filter.Search != "" {
 		conditions = append(conditions, fmt.Sprintf("(p.title ILIKE '%%' || $%d || '%%' OR p.content ILIKE '%%' || $%d || '%%')", argIdx, argIdx))
 		args = append(args, filter.Search)
-		argIdx++
 	}
 
 	whereClause := ""
@@ -481,7 +395,6 @@ func (s *PostService) Update(ctx context.Context, postID, requesterID uuid.UUID,
 		mergedJSON, _ := json.Marshal(existing)
 		sets = append(sets, fmt.Sprintf("platform_posts = $%d", argIdx))
 		args = append(args, mergedJSON)
-		argIdx++
 	}
 
 	query := fmt.Sprintf("UPDATE posts SET %s WHERE id = $1", strings.Join(sets, ", "))

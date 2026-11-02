@@ -78,9 +78,6 @@ const (
 	// Token expiry warning threshold for CheckExpiringTokens.
 	tokenExpiryWarningDays = 7
 
-	// Meta tokens are valid for 60 days; refresh at 50 days.
-	metaTokenRefreshDays = 50
-
 	// Platform identifiers used in oauth_provider column.
 	providerGoogle    = "google"
 	providerFacebook  = "facebook"
@@ -1086,4 +1083,12 @@ func (s *ChannelOAuthService) ListPublishHistory(ctx context.Context, filter Pub
 	}
 
 	return records, total, nil
+}
+
+// strPtrOrNil maps "" to SQL NULL.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

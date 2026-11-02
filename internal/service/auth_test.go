@@ -1,7 +1,6 @@
 package service
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -66,54 +65,5 @@ func TestSha256Hash_KnownValue(t *testing.T) {
 	expected := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 	if h != expected {
 		t.Errorf("expected %s, got %s", expected, h)
-	}
-}
-
-func TestGenerateSlug(t *testing.T) {
-	tests := []struct {
-		email    string
-		contains string
-	}{
-		{"john.doe@example.com", "john-doe"},
-		{"UPPER@example.com", "upper"},
-		{"test_user@test.com", "test-user"},
-		{"simple@email.com", "simple"},
-	}
-	for _, tt := range tests {
-		slug := generateSlug(tt.email)
-		if !strings.Contains(slug, tt.contains) {
-			t.Errorf("slug for %s should contain %s, got %s", tt.email, tt.contains, slug)
-		}
-		// Should have a random suffix
-		parts := strings.Split(slug, "-")
-		if len(parts) < 2 {
-			t.Errorf("slug should have random suffix, got %s", slug)
-		}
-	}
-}
-
-func TestGenerateSlug_Uniqueness(t *testing.T) {
-	slug1 := generateSlug("same@email.com")
-	slug2 := generateSlug("same@email.com")
-	if slug1 == slug2 {
-		t.Error("slugs for same email should be unique due to random suffix")
-	}
-}
-
-func TestGenerateSlug_IgnoresAfterAt(t *testing.T) {
-	slug := generateSlug("user@verylongdomain.example.com")
-	if strings.Contains(slug, "verylongdomain") {
-		t.Error("slug should not contain domain part")
-	}
-}
-
-func TestGenerateSlug_SpecialCharacters(t *testing.T) {
-	slug := generateSlug("my.name+tag@example.com")
-	// + should be stripped, . should become -
-	if strings.Contains(slug, "+") {
-		t.Error("slug should not contain +")
-	}
-	if strings.Contains(slug, ".") {
-		t.Error("slug should not contain .")
 	}
 }

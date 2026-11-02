@@ -50,9 +50,8 @@ func main() {
 
 	// S3
 	hotS3 := infra.NewS3Client(cfg.S3)
-	coldS3 := infra.NewS3Client(cfg.S3Cold)
 
-	svc := service.New(cfg, pool, rdb, hotS3, coldS3)
+	svc := service.New(cfg, pool, rdb, hotS3)
 	ctx := context.Background()
 
 	// If a specific video ID is provided, process just that one

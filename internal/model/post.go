@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -204,24 +203,6 @@ type PostListFilter struct {
 	PageSize  int    `json:"page_size,omitempty"`
 	SortBy    string `json:"sort_by,omitempty"`
 	SortOrder string `json:"sort_order,omitempty"`
-}
-
-// MarshalPlatformPosts converts the map to JSONB for storage.
-func MarshalPlatformPosts(posts map[string]*PlatformPost) ([]byte, error) {
-	if posts == nil {
-		return nil, nil
-	}
-	return json.Marshal(posts)
-}
-
-// UnmarshalPlatformPosts converts JSONB back to the map.
-func UnmarshalPlatformPosts(data []byte) (map[string]*PlatformPost, error) {
-	if data == nil {
-		return nil, nil
-	}
-	var posts map[string]*PlatformPost
-	err := json.Unmarshal(data, &posts)
-	return posts, err
 }
 
 // PlatformCharLimits defines the character limits per platform.

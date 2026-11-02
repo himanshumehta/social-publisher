@@ -135,73 +135,6 @@ func (s *ChannelService) Create(ctx context.Context, req CreateChannelRequest) (
 	return &c, nil
 }
 
-// CreateCreatorChannel creates a channel owned by a creator (via OAuth).
-func (s *ChannelService) CreateCreatorChannel(ctx context.Context, userID uuid.UUID, platform, channelName, channelIDStr, channelURL string) (*model.Channel, error) {
-	var c model.Channel
-	err := s.pool.QueryRow(ctx,
-		`INSERT INTO channels (user_id, channel_type, platform, channel_name, channel_id, channel_url, connection_status)
-		 VALUES ($1, 'creator', $2, $3, $4, $5, 'connected')
-		 RETURNING `+channelColumns,
-		userID, platform, channelName, nilIfEmptyStr(channelIDStr), nilIfEmptyStr(channelURL),
-	).Scan(&c.ID, &c.CategoryID, &c.UserID, &c.ChannelType, &c.Platform, &c.ChannelName, &c.ChannelID, &c.ChannelURL, &c.OAuthProvider, &c.ConnectionStatus, &c.IsActive, &c.TokenExpiresAt, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("create creator channel: %w", err)
-	}
-	return &c, nil
-}
-
-// ListByUser returns channels owned by a specific user.
-func (s *ChannelService) ListByUser(ctx context.Context, userID uuid.UUID) ([]model.Channel, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+channelColumns+` FROM channels WHERE user_id = $1 AND is_active = TRUE ORDER BY created_at ASC`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("query user channels: %w", err)
-	}
-	defer rows.Close()
-
-	var channels []model.Channel
-	for rows.Next() {
-		var c model.Channel
-		if err := scanChannel(rows, &c); err != nil {
-			return nil, fmt.Errorf("scan channel: %w", err)
-		}
-		channels = append(channels, c)
-	}
-	if channels == nil {
-		channels = []model.Channel{}
-	}
-	return channels, nil
-}
-
-// ListAvailableForProject returns creator's channels + system channels for the project's category.
-func (s *ChannelService) ListAvailableForProject(ctx context.Context, projectID, userID uuid.UUID) ([]model.Channel, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+channelColumns+`
-		 FROM channels
-		 WHERE is_active = TRUE AND connection_status = 'connected' AND (
-		     user_id = $1
-		     OR (channel_type = 'system' AND category_id = (SELECT category_id FROM projects WHERE id = $2))
-		 )
-		 ORDER BY channel_type DESC, created_at ASC`, userID, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("query available channels: %w", err)
-	}
-	defer rows.Close()
-
-	var channels []model.Channel
-	for rows.Next() {
-		var c model.Channel
-		if err := scanChannel(rows, &c); err != nil {
-			return nil, fmt.Errorf("scan channel: %w", err)
-		}
-		channels = append(channels, c)
-	}
-	if channels == nil {
-		channels = []model.Channel{}
-	}
-	return channels, nil
-}
-
 func (s *ChannelService) Update(ctx context.Context, id uuid.UUID, req UpdateChannelRequest) (*model.Channel, error) {
 	var sets []string
 	var args []interface{}
@@ -267,57 +200,6 @@ func (s *ChannelService) Delete(ctx context.Context, id uuid.UUID) error {
 	result, err := s.pool.Exec(ctx, `DELETE FROM channels WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete channel: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("channel not found")
-	}
-	return nil
-}
-
-// GetByIDAndUser returns a channel only if it belongs to the given user.
-func (s *ChannelService) GetByIDAndUser(ctx context.Context, id, userID uuid.UUID) (*model.Channel, error) {
-	var c model.Channel
-	err := s.pool.QueryRow(ctx,
-		`SELECT `+channelColumns+` FROM channels WHERE id = $1 AND user_id = $2`, id, userID,
-	).Scan(&c.ID, &c.CategoryID, &c.UserID, &c.ChannelType, &c.Platform, &c.ChannelName, &c.ChannelID, &c.ChannelURL, &c.OAuthProvider, &c.ConnectionStatus, &c.IsActive, &c.TokenExpiresAt, &c.CreatedAt, &c.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("channel not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get channel by user: %w", err)
-	}
-	return &c, nil
-}
-
-// HasPlatformChannel returns true if the user already has a creator channel for the given platform.
-func (s *ChannelService) HasPlatformChannel(ctx context.Context, userID uuid.UUID, platform string) (bool, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM channels WHERE user_id = $1 AND platform = $2 AND channel_type = 'creator')`,
-		userID, platform,
-	).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check platform channel: %w", err)
-	}
-	return exists, nil
-}
-
-// DeleteByUser deletes a creator channel owned by the given user.
-func (s *ChannelService) DeleteByUser(ctx context.Context, id, userID uuid.UUID) error {
-	var count int
-	err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM publish_records WHERE channel_id = $1 AND status NOT IN ('removed', 'failed')`, id,
-	).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("check publish records: %w", err)
-	}
-	if count > 0 {
-		return fmt.Errorf("cannot delete channel with %d active publish records", count)
-	}
-
-	result, err := s.pool.Exec(ctx, `DELETE FROM channels WHERE id = $1 AND user_id = $2 AND channel_type = 'creator'`, id, userID)
-	if err != nil {
-		return fmt.Errorf("delete creator channel: %w", err)
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("channel not found")

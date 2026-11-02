@@ -344,11 +344,6 @@ func (s *UploadService) AbortUpload(ctx context.Context, userID uuid.UUID, uploa
 	return nil
 }
 
-// PresignAvatarUpload generates a presigned PUT URL for uploading an avatar image.
-func (s *UploadService) PresignAvatarUpload(ctx context.Context, key, contentType string, expiry time.Duration) (string, error) {
-	return s.s3.PresignPutObject(ctx, key, contentType, expiry)
-}
-
 func (s *UploadService) GetPresignedURLsForParts(ctx context.Context, userID uuid.UUID, req RefreshURLsRequest) (*RefreshURLsResponse, error) {
 	var mu model.MultipartUpload
 	err := s.pool.QueryRow(ctx,

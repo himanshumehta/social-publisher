@@ -654,3 +654,19 @@ func (h *Handler) oauthRedirectError(w http.ResponseWriter, r *http.Request, err
 	redirectURL := fmt.Sprintf("%s%s?error=%s", h.cfg.App.FrontendURL, page, errMsg)
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
+
+// RetryThumbnail handles POST /api/v1/admin/publish-records/{id}/retry-thumbnail.
+func (h *Handler) RetryThumbnail(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.requirePathUUID(w, r, "id", "publish record id")
+	if !ok {
+		return
+	}
+
+	if err := h.services.Orchestrator.RetryYouTubeThumbnail(r.Context(), id); err != nil {
+		h.logger.Error("retry thumbnail failed", "publish_record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "thumbnail set"})
+}

@@ -27,9 +27,6 @@ const (
 	// Maximum video file size accepted by Twitter (512 MB).
 	twitterMaxFileSize = 512 * 1024 * 1024
 
-	// Maximum video duration in seconds.
-	twitterMaxDurationSec = 140
-
 	// Processing poll limits.
 	twitterMaxPollAttempts  = 120
 	twitterDefaultPollDelay = 5 * time.Second
@@ -277,24 +274,6 @@ func (s *TwitterUploadService) Upload(ctx context.Context, channelID, versionID,
 		tweetID, tweetURL, now, publishRecordID)
 
 	return tweetID, nil
-}
-
-// CheckProcessing polls the media processing status once and returns the
-// current state string. Intended for external callers that need to check
-// status without running the full upload flow.
-func (s *TwitterUploadService) CheckProcessing(ctx context.Context, mediaID, token string) (string, error) {
-	resp, err := s.getMediaStatus(ctx, token, mediaID)
-	if err != nil {
-		return "", err
-	}
-	if resp.ProcessingInfo == nil {
-		return "succeeded", nil
-	}
-	if resp.ProcessingInfo.Error != nil {
-		return "failed", fmt.Errorf("processing error: %s - %s",
-			resp.ProcessingInfo.Error.Name, resp.ProcessingInfo.Error.Message)
-	}
-	return resp.ProcessingInfo.State, nil
 }
 
 // ---------------------------------------------------------------------------

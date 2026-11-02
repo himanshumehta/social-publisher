@@ -130,9 +130,6 @@ func (pp *PostPublisher) EnableDryRun() {
 	pp.logger.Info("post publisher in DRY-RUN mode: no platform APIs will be called")
 }
 
-// IsDryRun reports whether the publisher is in dry-run mode.
-func (pp *PostPublisher) IsDryRun() bool { return pp.dryRun }
-
 func (pp *PostPublisher) Publish(ctx context.Context, post *model.Post) ([]model.PostPublishResult, error) {
 	if len(post.PlatformPosts) == 0 {
 		return nil, fmt.Errorf("no platform posts to publish")

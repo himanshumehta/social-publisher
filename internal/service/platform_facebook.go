@@ -32,12 +32,6 @@ const (
 	// for reel URL-fetch uploads. One hour is generous enough for Facebook to
 	// begin the download yet short enough to limit exposure.
 	fbPresignExpiry = 1 * time.Hour
-
-	// fbProcessingPollMax caps how long we wait for Facebook to transcode.
-	fbProcessingPollMax = 30 * time.Minute
-
-	// fbProcessingPollInterval is the pause between status checks.
-	fbProcessingPollInterval = 15 * time.Second
 )
 
 // ---------------------------------------------------------------------------

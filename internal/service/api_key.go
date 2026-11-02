@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -51,35 +50,4 @@ func (s *APIKeyService) ValidateKey(ctx context.Context, keyHash string) (*model
 	}()
 
 	return apiKey, nil
-}
-
-func (s *APIKeyService) ListByUser(ctx context.Context, userID uuid.UUID) ([]model.APIKey, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, key_prefix, user_id, scopes, is_active, rate_limit, last_used_at, expires_at, created_at
-		FROM api_keys
-		WHERE user_id = $1
-		ORDER BY created_at DESC`,
-		userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var keys []model.APIKey
-	for rows.Next() {
-		var key model.APIKey
-		err := rows.Scan(
-			&key.ID, &key.Name, &key.KeyPrefix, &key.UserID,
-			&key.Scopes, &key.IsActive, &key.RateLimit,
-			&key.LastUsedAt, &key.ExpiresAt, &key.CreatedAt,
-		)
-		if err != nil {
-			slog.Warn("scan api key row", "error", err)
-			continue
-		}
-		keys = append(keys, key)
-	}
-
-	return keys, nil
 }

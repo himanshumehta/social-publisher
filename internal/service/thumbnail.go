@@ -216,32 +216,3 @@ func generateThumbnailKey(originalKey string) string {
 	baseKey := strings.TrimSuffix(originalKey, ext)
 	return baseKey + "_thumb.jpg"
 }
-
-// DeleteThumbnail deletes a thumbnail from S3 when a video is deleted.
-func (s *ThumbnailService) DeleteThumbnail(ctx context.Context, videoID uuid.UUID) error {
-	var thumbnailKey *string
-	err := s.pool.QueryRow(ctx,
-		`SELECT thumbnail_key FROM videos WHERE id = $1`,
-		videoID).Scan(&thumbnailKey)
-	if err != nil {
-		return fmt.Errorf("get thumbnail key: %w", err)
-	}
-
-	if thumbnailKey == nil || *thumbnailKey == "" {
-		return nil
-	}
-
-	if err := s.s3.DeleteObject(ctx, *thumbnailKey); err != nil {
-		return fmt.Errorf("delete thumbnail from S3: %w", err)
-	}
-
-	_, err = s.pool.Exec(ctx,
-		`UPDATE videos SET thumbnail_key = NULL, updated_at = NOW()
-		 WHERE id = $1`,
-		videoID)
-	if err != nil {
-		return fmt.Errorf("update video record: %w", err)
-	}
-
-	return nil
-}
