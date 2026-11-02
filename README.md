@@ -126,7 +126,7 @@ Five binaries share one module: `server`, `worker`, `migrate`, `admin`, and `thu
 
 - **Retries.** Text posts that fail on every platform retry up to 3 times. Partial success marks the post `published` and records per-platform errors in `publish_results`; failed platforms are not retried automatically. Video upload queue items are attempted once and marked `failed` with a mapped, redacted error.
 - **Back-pressure.** Per-platform token buckets (`golang.org/x/time/rate`) and a circuit breaker that opens after 5 consecutive failures for 5 minutes. YouTube quota (1,600 units per upload) is counted in Redis and shown at `GET /api/v1/admin/quota`; it is not enforced before an upload.
-- **Stuck work.** Rows left in a transient state for 5 minutes are reclaimed by the next worker.
+- **Stuck work.** Posts left in `scanning`, `generating` or `publishing` for 5 minutes are reclaimed by the next worker. Video queue items stuck mid-upload are not reclaimed automatically.
 - **Observability.** JSON logs (`log/slog`) with request IDs, every value passed through a redactor that masks tokens, secrets and OAuth codes. `GET /health` for liveness, `GET /health/ready` checks Postgres (and reports Redis as degraded when down). There are no metrics endpoints yet.
 - **Housekeeping.** The worker removes abandoned upload sessions and expired refresh tokens every 6 hours and warns about channel tokens within 7 days of expiry.
 
@@ -145,7 +145,7 @@ Reporting, scope and known gaps: [SECURITY.md](SECURITY.md).
 
 ## Quickstart
 
-Requirements: Go 1.26+ (the `toolchain go1.27.3` line in `go.mod` downloads the exact toolchain), PostgreSQL (CI runs 16; the clean-clone check below used 18), Redis (checked with 7.2), `curl` and `jq`. No accounts or API keys.
+Requirements: Go 1.26+ (the `toolchain go1.27.3` line in `go.mod` downloads the exact toolchain), PostgreSQL (CI runs 16; this quickstart was verified against 18), Redis (checked with 7.2), `curl` and `jq`. No accounts or API keys.
 
 ```bash
 git clone https://github.com/himanshumehta/social-publisher && cd social-publisher
@@ -258,7 +258,7 @@ migrations/  39 ordered SQL migrations
 - **Real posting** needs your own developer app on each network, connected channels and usually app review (Meta for Instagram, Facebook and Threads publishing; LinkedIn product access; an X app with write scopes). Platform quotas apply.
 - **No UI.** The API is the interface; OAuth callbacks redirect to `APP_FRONTEND_URL`, which you provide.
 - **Single-instance assumptions.** Rate limiters, circuit breakers and the OAuth-state fallback are per process.
-- **Retries** cover whole-post failure only; partially failed posts and failed video uploads need a manual re-queue.
+- **Retries** cover whole-post failure only; partially failed posts and failed or stuck video uploads need a manual re-queue.
 - **Schema history.** This code was extracted from a larger product. The migrations still create tables for modules that were removed (marketplace, payouts, newsletters and others); no code reads or writes them, and migration `000019` is a no-op seed guard on a fresh database.
 - **Docker path** not exercised in this revision (see Quickstart).
 
