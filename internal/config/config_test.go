@@ -113,6 +113,7 @@ func prodConfig() *Config {
 			RefreshTokenTTL: 24 * time.Hour,
 		},
 		TokenEncKey: goodKey,
+		Ingest:      IngestConfig{MaxVideoBytes: DefaultIngestMaxVideoBytes},
 	}
 }
 
@@ -132,6 +133,14 @@ func TestValidate_ProdRejectsDefaults(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
+	}
+}
+
+func TestValidate_IngestCapMustBePositive(t *testing.T) {
+	cfg := devConfig()
+	cfg.Ingest.MaxVideoBytes = 0
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "INGEST_MAX_VIDEO_BYTES") {
+		t.Fatalf("Validate() = %v, want INGEST_MAX_VIDEO_BYTES error", err)
 	}
 }
 

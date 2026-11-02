@@ -35,6 +35,9 @@ type Services struct {
 	PostPublisher *PostPublisher
 	Calendar      *CalendarService
 
+	// API-key video ingest: upload → pending_review post with a linked video.
+	VideoIngest *VideoIngestService
+
 	APIKey      *APIKeyService
 	TokenCrypto *TokenCrypto
 }
@@ -81,6 +84,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3
 		orchestrator.EnableDryRun(logger)
 	}
 
+	postSvc := NewPostService(pool, postScanner, postGenerator, postReviewer, logger)
+
 	return &Services{
 		Auth:          NewAuthService(cfg, pool),
 		User:          NewUserService(pool),
@@ -93,12 +98,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3
 		Publish:       NewPublishService(pool),
 		ChannelOAuth:  NewChannelOAuthService(cfg, pool, rdb, tokenCrypto, quotaTracker),
 		Orchestrator:  orchestrator,
-		Post:          NewPostService(pool, postScanner, postGenerator, postReviewer, logger),
+		Post:          postSvc,
 		PostScanner:   postScanner,
 		PostGenerator: postGenerator,
 		PostReviewer:  postReviewer,
 		PostPublisher: postPublisher,
 		Calendar:      NewCalendarService(pool),
+		VideoIngest:   NewVideoIngestService(pool, s3, postSvc, logger),
 		APIKey:        NewAPIKeyService(pool, logger),
 		TokenCrypto:   tokenCrypto,
 	}, nil

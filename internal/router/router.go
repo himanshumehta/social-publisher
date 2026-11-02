@@ -49,6 +49,18 @@ var credentialRoutes = map[string]bool{
 	"POST /api/v1/auth/refresh": true,
 }
 
+// ingestRoute is the only route that accepts a body above
+// middleware.MaxRequestBodyBytes.
+const ingestRoute = "POST /api/v1/external/videos"
+
+// bodyLimits returns the request body cap per route pattern; routes not
+// listed get middleware.MaxRequestBodyBytes.
+func bodyLimits(cfg *config.Config) map[string]int64 {
+	return map[string]int64{
+		ingestRoute: handler.IngestBodyLimit(cfg.Ingest.MaxVideoBytes),
+	}
+}
+
 // Routes returns the complete API surface.
 func Routes(h *handler.Handler, hh *handler.HealthHandler) []Route {
 	return []Route{
@@ -89,6 +101,8 @@ func Routes(h *handler.Handler, hh *handler.HealthHandler) []Route {
 		// Machine clients
 		{"POST /api/v1/external/posts", APIKey, h.ExternalCreatePost},
 		{"GET /api/v1/external/posts/{id}", APIKey, h.ExternalGetPost},
+		// Multipart video upload → post in pending_review (see bodyLimits).
+		{ingestRoute, APIKey, h.ExternalIngestVideo},
 
 		// Videos. This is an operator path, so every route is admin-only.
 		{"POST /api/v1/admin/projects", Admin, h.CreateProject},
@@ -155,9 +169,18 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 	// to slow password guessing and refresh-token probing.
 	authLimiter := middleware.NewRateLimiter(authRatePerSecond, authBurst, cfg.TrustProxyHeaders)
 
+	limits := bodyLimits(cfg)
+
 	mux := http.NewServeMux()
 	for _, rt := range routes {
 		var hnd http.Handler = rt.Handler
+		// The body cap sits inside the auth middleware: an unauthenticated
+		// request is rejected before any of its body is read.
+		limit, ok := limits[rt.Pattern]
+		if !ok {
+			limit = middleware.MaxRequestBodyBytes
+		}
+		hnd = middleware.LimitBody(limit)(hnd)
 		switch rt.Access {
 		case User:
 			hnd = authMw(hnd)
@@ -180,9 +203,8 @@ func build(cfg *config.Config, logger *slog.Logger, routes []Route, apiKeys *ser
 	rl := middleware.NewRateLimiter(apiRatePerSecond, apiBurst, cfg.TrustProxyHeaders)
 
 	// Outermost first: Recovery → Logging → SecurityHeaders → CORS →
-	// RequestID → rate limit → body limit → mux.
+	// RequestID → rate limit → mux → per-route auth → per-route body limit.
 	var chain http.Handler = mux
-	chain = middleware.LimitBody(middleware.MaxRequestBodyBytes)(chain)
 	chain = rl.Middleware(chain)
 	chain = middleware.RequestID(chain)
 	chain = middleware.CORS(cfg.App.FrontendURL)(chain)

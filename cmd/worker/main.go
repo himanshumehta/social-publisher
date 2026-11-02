@@ -93,7 +93,8 @@ func main() {
 		warnExpiringTokens(ctx, svc)
 	})
 
-	// Housekeeping: abandoned upload sessions and dead refresh tokens.
+	// Housekeeping: abandoned upload sessions, dead refresh tokens and expired
+	// ingest idempotency keys.
 	go every(ctx, "cleanup", cleanupInterval, false, func(ctx context.Context) {
 		cleanup(ctx, pool)
 	})
@@ -200,5 +201,11 @@ func cleanup(ctx context.Context, pool *pgxpool.Pool) {
 		slog.Error("expired token cleanup error", "error", err)
 	} else {
 		slog.Info("expired token cleanup completed", "deleted", result.RowsAffected())
+	}
+
+	if n, err := service.ExpireIngestRequests(ctx, pool); err != nil {
+		slog.Error("ingest idempotency cleanup error", "error", err)
+	} else {
+		slog.Info("ingest idempotency cleanup completed", "deleted", n)
 	}
 }

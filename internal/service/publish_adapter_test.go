@@ -102,3 +102,41 @@ func TestPostPublisher_DryRun_MarksPublishedWithoutCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestPostPublisher_DryRun_RoutesVideoPlatforms(t *testing.T) {
+	logger, buf := newBufferLogger()
+	pp := NewPostPublisher(nil, logger, nil)
+	pp.EnableDryRun()
+
+	videoID := uuid.New()
+	post := &model.Post{ID: uuid.New(), LinkedVideoID: &videoID}
+	pp2 := &model.PlatformPost{Platform: "youtube", Text: "Ownership cost, year by year"}
+	res := pp.publishToPlatform(context.Background(), post, pp2, &model.Channel{Platform: "youtube", ChannelName: "dry-run"})
+	if res.Status != "published" {
+		t.Fatalf("youtube video post: status = %q (error %q), want published", res.Status, res.Error)
+	}
+	if want := "would publish youtube " + post.ID.String(); !strings.Contains(buf.String(), want) {
+		t.Errorf("log missing %q\ngot: %s", want, buf.String())
+	}
+}
+
+func TestPostPublisher_Live_VideoPostFailsClosed(t *testing.T) {
+	logger, _ := newBufferLogger()
+	pp := NewPostPublisher(nil, logger, nil)
+	called := false
+	pp.adapters["instagram"] = PlatformAdapterFunc(func(context.Context, PublishRequest) (string, string, error) {
+		called = true
+		return "id", "https://example.invalid/p", nil
+	})
+
+	videoID := uuid.New()
+	post := &model.Post{ID: uuid.New(), LinkedVideoID: &videoID}
+	pp2 := &model.PlatformPost{Platform: "instagram", Text: "caption"}
+	res := pp.publishToPlatform(context.Background(), post, pp2, &model.Channel{ID: uuid.New(), Platform: "instagram"})
+	if res.Status != "failed" || res.Error != errLiveVideoPost {
+		t.Fatalf("result = %+v, want failed with errLiveVideoPost", res)
+	}
+	if called {
+		t.Error("live text adapter was called for a video post (would publish the caption without the video)")
+	}
+}

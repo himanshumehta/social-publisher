@@ -29,8 +29,21 @@ type Config struct {
 	OutboundAllowPrivate bool
 	Claude               ClaudeConfig
 	Publish              PublishConfig
+	Ingest               IngestConfig
 	DevAdmin             DevAdminConfig
 }
+
+// IngestConfig bounds the API-key video ingest endpoint
+// (POST /api/v1/external/videos).
+type IngestConfig struct {
+	// MaxVideoBytes caps one uploaded video (INGEST_MAX_VIDEO_BYTES). The
+	// request body cap is this plus room for the thumbnail and form fields.
+	MaxVideoBytes int64
+}
+
+// DefaultIngestMaxVideoBytes is the video size cap when INGEST_MAX_VIDEO_BYTES
+// is unset: 512 MiB.
+const DefaultIngestMaxVideoBytes = 512 << 20
 
 // PublishConfig controls outbound publishing to social platforms.
 type PublishConfig struct {
@@ -192,6 +205,9 @@ func Load() *Config {
 		Publish: PublishConfig{
 			DryRun: envOrDefaultBool("PUBLISH_DRY_RUN", true),
 		},
+		Ingest: IngestConfig{
+			MaxVideoBytes: int64(envOrDefaultInt("INGEST_MAX_VIDEO_BYTES", DefaultIngestMaxVideoBytes)),
+		},
 		DevAdmin: DevAdminConfig{
 			Email:    envOrDefault("DEV_ADMIN_EMAIL", ""),
 			Password: envOrDefault("DEV_ADMIN_PASSWORD", ""),
@@ -242,6 +258,9 @@ func (c *Config) Validate() error {
 	}
 	if c.App.FrontendURL == "*" {
 		errs = append(errs, "APP_FRONTEND_URL must be a single origin, not *")
+	}
+	if c.Ingest.MaxVideoBytes <= 0 {
+		errs = append(errs, "INGEST_MAX_VIDEO_BYTES must be a positive number of bytes")
 	}
 
 	if !c.IsDev() {

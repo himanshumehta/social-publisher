@@ -15,6 +15,7 @@ import (
 
 	"github.com/himanshumehta/social-publisher/internal/config"
 	"github.com/himanshumehta/social-publisher/internal/handler"
+	"github.com/himanshumehta/social-publisher/internal/middleware"
 )
 
 const testSecret = "router-test-secret-that-is-long-enough-123"
@@ -191,5 +192,33 @@ func TestCredentialRoutesHaveStricterRateLimit(t *testing.T) {
 		if codes[authBurst-1] != reachedStatus || codes[authBurst] != http.StatusTooManyRequests {
 			t.Errorf("%s: statuses %v, want %d allowed then 429", pattern, codes, authBurst)
 		}
+	}
+}
+
+// TestBodyLimits pins that only the ingest route accepts more than
+// MaxRequestBodyBytes, and that every other route still rejects a large body.
+func TestBodyLimits(t *testing.T) {
+	cfg := testConfig()
+	for pattern, limit := range bodyLimits(cfg) {
+		if pattern != ingestRoute {
+			t.Errorf("unexpected large-body route %q", pattern)
+		}
+		if limit <= middleware.MaxRequestBodyBytes {
+			t.Errorf("%s limit %d is not above the default", pattern, limit)
+		}
+	}
+	for _, rt := range stubbedRoutes() {
+		if rt.Pattern == ingestRoute && rt.Access != APIKey {
+			t.Errorf("%s is %v, want APIKey", ingestRoute, rt.Access)
+		}
+	}
+
+	h := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), stubbedRoutes(), nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader("{}"))
+	r.ContentLength = middleware.MaxRequestBodyBytes + 1
+	r.Header.Set("Authorization", "Bearer "+token(t, "creator"))
+	r.RemoteAddr = "10.7.0.1:1234"
+	if got := serve(h, r); got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST /api/v1/posts with a large body: status %d, want 413", got)
 	}
 }

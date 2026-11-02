@@ -5,9 +5,10 @@ import (
 	"strings"
 )
 
-// MaxRequestBodyBytes caps JSON request bodies. Video bytes never pass
-// through the API (clients upload straight to S3 with presigned URLs), so
-// 1 MiB is far above any legitimate payload.
+// MaxRequestBodyBytes caps JSON request bodies. The admin video path uploads
+// straight to S3 with presigned URLs, so 1 MiB is far above any legitimate
+// JSON payload. The one exception is the API-key ingest route, which the
+// router gives its own, larger cap.
 const MaxRequestBodyBytes = 1 << 20
 
 // LimitBody rejects request bodies larger than limit bytes; reads past the

@@ -27,6 +27,8 @@ type PublishRequest struct {
 	AccessToken string
 	Text        string
 	ImageURL    string
+	// VideoKey is the storage key of the post's linked video, if any.
+	VideoKey string
 }
 
 // PlatformAdapter publishes one piece of content to one platform and returns
@@ -61,21 +63,23 @@ func (d DryRunAdapter) Publish(_ context.Context, req PublishRequest) (string, s
 		logger = slog.Default()
 	}
 	prefix := captionPrefix(req.Text, dryRunCaptionPrefixLen)
-	logger.Info(fmt.Sprintf("would publish %s %s %s", req.Platform, req.PostID, prefix),
-		"dry_run", true,
-		"platform", req.Platform,
-		"post_id", req.PostID,
-	)
+	attrs := []any{"dry_run", true, "platform", req.Platform, "post_id", req.PostID}
+	if req.VideoKey != "" {
+		attrs = append(attrs, "video_key", req.VideoKey)
+	}
+	logger.Info(fmt.Sprintf("would publish %s %s %s", req.Platform, req.PostID, prefix), attrs...)
 	id := fmt.Sprintf("dryrun-%s-%s", req.Platform, shortID(req.PostID))
 	return id, fmt.Sprintf("https://dry-run.invalid/%s/%s", req.Platform, id), nil
 }
 
-// dryRunAdapters binds every platform to the same DryRunAdapter.
-func dryRunAdapters(logger *slog.Logger, platforms []string) map[string]PlatformAdapter {
+// dryRunAdapters binds every listed platform to the same DryRunAdapter.
+func dryRunAdapters(logger *slog.Logger, platformSets ...[]string) map[string]PlatformAdapter {
 	adapter := DryRunAdapter{Logger: logger}
-	m := make(map[string]PlatformAdapter, len(platforms))
-	for _, p := range platforms {
-		m[p] = adapter
+	m := make(map[string]PlatformAdapter)
+	for _, platforms := range platformSets {
+		for _, p := range platforms {
+			m[p] = adapter
+		}
 	}
 	return m
 }

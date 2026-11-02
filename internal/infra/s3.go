@@ -226,3 +226,20 @@ func (s *S3Client) UploadObject(ctx context.Context, key, contentType string, da
 	url := fmt.Sprintf("%s/%s/%s", s.endpoint, s.bucket, key)
 	return url, nil
 }
+
+// PutObject streams size bytes from body into a private object. body must be
+// seekable (an *os.File, for example) so the SDK can sign and, on a retry,
+// resend the payload without buffering it in memory.
+func (s *S3Client) PutObject(ctx context.Context, key, contentType string, body io.ReadSeeker, size int64) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(size),
+		Body:          body,
+	})
+	if err != nil {
+		return fmt.Errorf("put object %s: %w", key, err)
+	}
+	return nil
+}

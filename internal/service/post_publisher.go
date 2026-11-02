@@ -130,7 +130,8 @@ func NewPostPublisher(
 // so no credentials or connected channels are required.
 func (pp *PostPublisher) EnableDryRun() {
 	pp.dryRun = true
-	pp.adapters = dryRunAdapters(pp.logger, SupportedPostPlatforms)
+	// Video posts (from the ingest endpoint) can also target YouTube.
+	pp.adapters = dryRunAdapters(pp.logger, SupportedPostPlatforms, SupportedVideoPlatforms)
 	pp.logger.Info("post publisher in DRY-RUN mode: no platform APIs will be called")
 }
 
@@ -272,6 +273,14 @@ func (pp *PostPublisher) publishToPlatform(ctx context.Context, post *model.Post
 		return pp.runAdapter(ctx, adapter, post, platformPost, channel, "", result)
 	}
 
+	// The live adapters post text and images only. Publishing an ingested
+	// video post through them would drop the video, so fail closed instead.
+	if post.LinkedVideoID != nil {
+		result.Status = "failed"
+		result.Error = errLiveVideoPost
+		return result
+	}
+
 	if breaker, ok := pp.breakers[platform]; ok && breaker.isOpen() {
 		result.Status = "failed"
 		result.Error = "platform circuit breaker is open, too many recent failures"
@@ -298,6 +307,26 @@ func (pp *PostPublisher) publishToPlatform(ctx context.Context, post *model.Post
 	}
 
 	return pp.runAdapter(ctx, adapter, post, platformPost, channel, accessToken, result)
+}
+
+// errLiveVideoPost is the per-platform error for a video post when dry-run
+// is off: live video delivery is not wired into the post pipeline yet.
+const errLiveVideoPost = "video posts are not published by the live post pipeline yet; " +
+	"run with PUBLISH_DRY_RUN=true or publish the video from the admin upload queue"
+
+// linkedVideoKey returns the storage key of the post's linked video, or "".
+func (pp *PostPublisher) linkedVideoKey(ctx context.Context, post *model.Post) string {
+	if post.LinkedVideoID == nil || pp.pool == nil {
+		return ""
+	}
+	var key string
+	if err := pp.pool.QueryRow(ctx,
+		`SELECT storage_key FROM videos WHERE id = $1`, *post.LinkedVideoID,
+	).Scan(&key); err != nil {
+		pp.logger.Warn("linked video not found", "post_id", post.ID, "video_id", *post.LinkedVideoID, "error", err)
+		return ""
+	}
+	return key
 }
 
 // runAdapter builds the final post text, invokes the platform adapter and
@@ -340,6 +369,7 @@ func (pp *PostPublisher) runAdapter(
 		AccessToken: accessToken,
 		Text:        postText,
 		ImageURL:    platformPost.ImageURL,
+		VideoKey:    pp.linkedVideoKey(ctx, post),
 	})
 
 	if err != nil {
