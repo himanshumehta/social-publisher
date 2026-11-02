@@ -329,3 +329,38 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestValidateUploadRequest(t *testing.T) {
+	ok := func(name string) InitiateUploadRequest {
+		return InitiateUploadRequest{FileName: name, FileSizeBytes: 1024, MimeType: "video/mp4"}
+	}
+	for in, want := range map[string]string{
+		"clip.mp4":                     "clip.mp4",
+		"../../other-project/v1-x.mp4": "v1-x.mp4",
+		`..\..\evil.mp4`:               "evil.mp4",
+		"name with spaces.mov":         "name with spaces.mov",
+		"weird\x00na;me$.mp4":          "weird_na_me_.mp4",
+		".hidden.mp4":                  "hidden.mp4",
+	} {
+		req := ok(in)
+		if err := validateUploadRequest(&req); err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		if req.FileName != want {
+			t.Errorf("%q sanitised to %q, want %q", in, req.FileName, want)
+		}
+	}
+
+	for name, req := range map[string]InitiateUploadRequest{
+		"too large": {FileName: "a.mp4", FileSizeBytes: maxUploadBytes + 1, MimeType: "video/mp4"},
+		"bad type":  {FileName: "a.sh", FileSizeBytes: 10, MimeType: "application/x-sh"},
+		"no size":   {FileName: "a.mp4", MimeType: "video/mp4"},
+		"only dots": {FileName: "..", FileSizeBytes: 10, MimeType: "video/mp4"},
+	} {
+		r := req
+		if err := validateUploadRequest(&r); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

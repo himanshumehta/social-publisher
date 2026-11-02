@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,6 +82,39 @@ type RefreshURLsResponse struct {
 	PresignedParts []PresignedPart `json:"presigned_parts"`
 }
 
+// maxUploadBytes caps a single upload. It is below the S3 multipart ceiling
+// (MaxPartNumber parts of partSizeBytes) and above any platform's video limit
+// this service targets.
+const maxUploadBytes = 20 << 30 // 20 GiB
+
+// unsafeFileNameChars are replaced in file names before they become part of
+// an S3 object key.
+var unsafeFileNameChars = regexp.MustCompile(`[^A-Za-z0-9._ -]`)
+
+// validateUploadRequest checks required fields, size and type, and rewrites
+// FileName to a safe base name (no directories, no "..", no control chars).
+func validateUploadRequest(req *InitiateUploadRequest) error {
+	if req.FileName == "" || req.FileSizeBytes <= 0 || req.MimeType == "" {
+		return fmt.Errorf("file_name, file_size_bytes, and mime_type are required")
+	}
+	if req.FileSizeBytes > maxUploadBytes {
+		return fmt.Errorf("file_size_bytes exceeds the %d byte limit", int64(maxUploadBytes))
+	}
+	if !strings.HasPrefix(req.MimeType, "video/") && !strings.HasPrefix(req.MimeType, "image/") {
+		return fmt.Errorf("mime_type must be video/* or image/*")
+	}
+	name := path.Base(strings.ReplaceAll(req.FileName, "\\", "/"))
+	name = strings.TrimLeft(unsafeFileNameChars.ReplaceAllString(name, "_"), ". ")
+	if len(name) > 200 {
+		name = name[len(name)-200:]
+	}
+	if name == "" {
+		return fmt.Errorf("file_name is not usable")
+	}
+	req.FileName = name
+	return nil
+}
+
 func (s *UploadService) InitiateUpload(ctx context.Context, userID uuid.UUID, req InitiateUploadRequest) (*InitiateUploadResponse, error) {
 	// Determine format (default to raw)
 	format := req.Format
@@ -118,8 +154,8 @@ func (s *UploadService) InitiateUpload(ctx context.Context, userID uuid.UUID, re
 		}
 	}
 
-	if req.FileName == "" || req.FileSizeBytes <= 0 || req.MimeType == "" {
-		return nil, fmt.Errorf("file_name, file_size_bytes, and mime_type are required")
+	if err := validateUploadRequest(&req); err != nil {
+		return nil, err
 	}
 
 	// ── Reject duplicate filenames ──────────────────────────────────────
