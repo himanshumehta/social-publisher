@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/infra"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 const (
@@ -49,6 +50,7 @@ type LinkedInUploadService struct {
 	crypto *TokenCrypto
 	api    *http.Client // short-timeout client for API calls
 	upload *http.Client // longer-timeout client for chunk uploads
+	media  *http.Client // thumbnail URLs (SSRF-guarded)
 }
 
 // LinkedInUploadMeta carries the caller-supplied metadata for a LinkedIn post.
@@ -72,6 +74,7 @@ func NewLinkedInUploadService(pool *pgxpool.Pool, s3 *infra.S3Client, crypto *To
 		upload: &http.Client{
 			Timeout: linkedInChunkUploadTimeout,
 		},
+		media: newMediaClient(false),
 	}
 }
 
@@ -439,25 +442,9 @@ func (s *LinkedInUploadService) uploadThumbnail(
 	token, thumbnailURL string,
 	instructions []liUploadInstruction,
 ) ([]string, error) {
-	// Download thumbnail from presigned URL.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, thumbnailURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create thumbnail download request: %w", err)
-	}
-
-	resp, err := s.api.Do(req)
+	thumbData, _, err := netguard.Fetch(ctx, s.media, thumbnailURL, maxThumbnailBytes)
 	if err != nil {
 		return nil, fmt.Errorf("download thumbnail: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("thumbnail download returned HTTP %d", resp.StatusCode)
-	}
-
-	thumbData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read thumbnail data: %w", err)
 	}
 
 	// Upload to each thumbnail instruction URL.

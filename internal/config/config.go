@@ -23,9 +23,13 @@ type Config struct {
 	// TrustProxyHeaders makes the rate limiter key clients by CF-Connecting-IP
 	// or X-Real-IP. Enable only behind a proxy that overwrites those headers.
 	TrustProxyHeaders bool
-	Claude            ClaudeConfig
-	Publish           PublishConfig
-	DevAdmin          DevAdminConfig
+	// OutboundAllowPrivate lets user-supplied URLs (source pages, images,
+	// thumbnails) resolve to private/loopback addresses. Off by default; only
+	// for development against local object storage.
+	OutboundAllowPrivate bool
+	Claude               ClaudeConfig
+	Publish              PublishConfig
+	DevAdmin             DevAdminConfig
 }
 
 // PublishConfig controls outbound publishing to social platforms.
@@ -181,6 +185,7 @@ func Load() *Config {
 		TokenEncKey:          envOrDefault("TOKEN_ENCRYPTION_KEY", ""),
 		TokenEncKeysPrevious: envList("TOKEN_ENCRYPTION_KEY_PREVIOUS"),
 		TrustProxyHeaders:    envOrDefaultBool("TRUST_PROXY_HEADERS", false),
+		OutboundAllowPrivate: envOrDefaultBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS", false),
 		Claude: ClaudeConfig{
 			APIKey: envOrDefault("CLAUDE_API_KEY", ""),
 		},

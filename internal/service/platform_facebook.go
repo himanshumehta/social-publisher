@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/infra"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 const (
@@ -45,6 +46,7 @@ type FacebookUploadService struct {
 	s3     *infra.S3Client
 	crypto *TokenCrypto
 	http   *http.Client
+	media  *http.Client // thumbnail URLs (SSRF-guarded)
 }
 
 // FacebookUploadMeta carries the caller-supplied metadata for a publish.
@@ -66,6 +68,7 @@ func NewFacebookUploadService(pool *pgxpool.Pool, s3 *infra.S3Client, crypto *To
 		http: &http.Client{
 			Timeout: 60 * time.Second,
 		},
+		media: newMediaClient(false),
 	}
 }
 
@@ -521,24 +524,9 @@ func (s *FacebookUploadService) reelFinish(ctx context.Context, pageID, token, v
 // setThumbnail downloads the image from thumbnailURL and uploads it to
 // Facebook's video thumbnails endpoint via multipart POST.
 func (s *FacebookUploadService) setThumbnail(ctx context.Context, videoID, token, thumbnailURL string) error {
-	// Download the thumbnail image.
-	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, thumbnailURL, nil)
-	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
-	}
-	dlResp, err := s.http.Do(dlReq)
+	thumbData, _, err := netguard.Fetch(ctx, s.media, thumbnailURL, maxThumbnailBytes)
 	if err != nil {
 		return fmt.Errorf("download thumbnail: %w", err)
-	}
-	defer dlResp.Body.Close()
-
-	if dlResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("thumbnail download returned %d", dlResp.StatusCode)
-	}
-
-	thumbData, err := io.ReadAll(io.LimitReader(dlResp.Body, 10<<20)) // 10 MB cap
-	if err != nil {
-		return fmt.Errorf("read thumbnail: %w", err)
 	}
 
 	// Build multipart form with the thumbnail file.

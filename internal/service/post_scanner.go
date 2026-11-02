@@ -19,6 +19,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/himanshumehta/social-publisher/internal/model"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 const (
@@ -41,22 +42,15 @@ func NewPostScanner(pool *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger) 
 		pool:   pool,
 		rdb:    rdb,
 		logger: logger,
-		client: &http.Client{
-			Timeout: scanHTTPTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return fmt.Errorf("too many redirects")
-				}
-				return nil
-			},
-		},
+		client: netguard.NewClient(scanHTTPTimeout, false),
 	}
 }
 
 func (s *PostScanner) Scan(ctx context.Context, rawURL string) (*model.ScannedContent, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, fmt.Errorf("invalid URL: %s", rawURL)
+	// source_url is user-supplied: http(s) only, and the client refuses to
+	// connect to loopback, private, link-local or metadata addresses.
+	if _, err := netguard.CheckURL(rawURL); err != nil {
+		return nil, fmt.Errorf("invalid source URL: %w", err)
 	}
 
 	cacheKey := scanCachePrefix + hashURL(rawURL)

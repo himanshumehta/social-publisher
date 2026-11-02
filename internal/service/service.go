@@ -8,6 +8,7 @@ import (
 
 	"github.com/himanshumehta/social-publisher/internal/config"
 	"github.com/himanshumehta/social-publisher/internal/infra"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 // Services is the dependency graph shared by the server and the worker.
@@ -67,6 +68,14 @@ func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3
 	postGenerator := NewPostGenerator(pool, rdb, logger, cfg.Claude.APIKey)
 	postReviewer := NewPostReviewer(logger)
 	postPublisher := NewPostPublisher(pool, logger, tokenCrypto)
+	// User-supplied URLs are fetched through SSRF-guarded clients.
+	if cfg.OutboundAllowPrivate {
+		slog.Warn("OUTBOUND_ALLOW_PRIVATE_NETWORKS=true: user-supplied URLs may reach private addresses")
+		media := newMediaClient(true)
+		postScanner.client = netguard.NewClient(scanHTTPTimeout, true)
+		postPublisher.mediaClient = media
+		youtube.media, facebook.media, linkedin.media = media, media, media
+	}
 	if cfg.Publish.DryRun {
 		postPublisher.EnableDryRun()
 		orchestrator.EnableDryRun(logger)

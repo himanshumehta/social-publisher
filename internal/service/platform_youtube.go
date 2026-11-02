@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/himanshumehta/social-publisher/internal/infra"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 const (
@@ -40,6 +41,7 @@ type YouTubeUploadService struct {
 	crypto       *TokenCrypto
 	quota        *QuotaTracker
 	http         *http.Client
+	media        *http.Client // thumbnail URLs (SSRF-guarded)
 	clientID     string
 	clientSecret string
 }
@@ -125,6 +127,7 @@ func NewYouTubeUploadService(pool *pgxpool.Pool, s3 *infra.S3Client, crypto *Tok
 			// No global timeout: chunk uploads can take a while on large files.
 			// Per-request timeouts are applied via context instead.
 		},
+		media: newMediaClient(false),
 	}
 }
 
@@ -643,28 +646,17 @@ const youtubeThumbnailMaxBytes = 2 * 1024 * 1024
 // as the custom thumbnail for the given video. If the downloaded image exceeds
 // YouTube's 2 MB limit it is re-encoded as JPEG at reduced quality.
 func (s *YouTubeUploadService) setThumbnail(ctx context.Context, ytVideoID, thumbnailURL, accessToken string) error {
-	// 1. Download the thumbnail image.
-	imgReq, err := http.NewRequestWithContext(ctx, http.MethodGet, thumbnailURL, nil)
-	if err != nil {
-		return fmt.Errorf("create thumbnail download request: %w", err)
-	}
-	imgResp, err := s.http.Do(imgReq)
+	// 1. Download the thumbnail image (guarded, size-capped) and check its
+	// declared dimensions before any full decode.
+	raw, contentType, err := netguard.Fetch(ctx, s.media, thumbnailURL, maxThumbnailBytes)
 	if err != nil {
 		return fmt.Errorf("download thumbnail: %w", err)
 	}
-	defer imgResp.Body.Close()
-
-	if imgResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("thumbnail download returned %d", imgResp.StatusCode)
-	}
-
-	raw, err := io.ReadAll(imgResp.Body)
-	if err != nil {
-		return fmt.Errorf("read thumbnail body: %w", err)
+	if err := checkImageDimensions(raw); err != nil {
+		return fmt.Errorf("thumbnail: %w", err)
 	}
 
 	uploadBody := raw
-	contentType := imgResp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "image/png"
 	}

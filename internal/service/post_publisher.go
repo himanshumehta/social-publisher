@@ -19,6 +19,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/himanshumehta/social-publisher/internal/model"
+	"github.com/himanshumehta/social-publisher/internal/netguard"
 )
 
 // Rate limiter and circuit breaker configuration.
@@ -46,6 +47,7 @@ type PostPublisher struct {
 	logger       *slog.Logger
 	tokenCrypto  *TokenCrypto
 	httpClient   *http.Client
+	mediaClient  *http.Client // user-supplied image URLs (SSRF-guarded)
 	rateLimiters map[string]*rate.Limiter
 	breakers     map[string]*circuitBreaker
 	adapters     map[string]PlatformAdapter
@@ -96,6 +98,7 @@ func NewPostPublisher(
 		logger:      logger,
 		tokenCrypto: tokenCrypto,
 		httpClient:  &http.Client{Timeout: publishHTTPTimeout},
+		mediaClient: newMediaClient(false),
 		rateLimiters: map[string]*rate.Limiter{
 			"twitter":   rate.NewLimiter(rate.Every(time.Minute*3/rateLimitTwitter), 5),
 			"threads":   rate.NewLimiter(rate.Every(24*time.Hour/rateLimitThreads), 5),
@@ -787,14 +790,15 @@ func (pp *PostPublisher) linkedInUploadImage(ctx context.Context, accessToken, o
 		return "", fmt.Errorf("init response missing uploadUrl or image URN")
 	}
 
-	imgResp, err := pp.httpClient.Get(imageURL)
+	// image_url is user-supplied: fetch it through the guarded client with a
+	// size cap instead of streaming whatever the URL returns.
+	imgData, _, err := netguard.Fetch(ctx, pp.mediaClient, imageURL, maxPostImageBytes)
 	if err != nil {
 		return "", fmt.Errorf("download image: %w", err)
 	}
-	defer imgResp.Body.Close()
 
 	uploadReq, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		initResp.Value.UploadURL, imgResp.Body)
+		initResp.Value.UploadURL, bytes.NewReader(imgData))
 	if err != nil {
 		return "", fmt.Errorf("create upload request: %w", err)
 	}
