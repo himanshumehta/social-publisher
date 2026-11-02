@@ -1,0 +1,6 @@
+# Test fixtures committed in 85cd60a (a dummy AES key and a dummy HMAC key in
+# unit tests). Neither was ever used outside tests; both were replaced with
+# generated values in a later commit. The history cannot be rewritten on a
+# published repository, so the findings are acknowledged here.
+85cd60a23f64b6907a24ee14564065f698b8a7da:internal/config/config_test.go:generic-api-key:101
+85cd60a23f64b6907a24ee14564065f698b8a7da:internal/middleware/middleware_test.go:generic-api-key:986

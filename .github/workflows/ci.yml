@@ -11,15 +11,59 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: socialpub
+          POSTGRES_PASSWORD: socialpub
+          POSTGRES_DB: socialpub_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U socialpub -d socialpub_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: socialpub
+      DB_PASSWORD: socialpub
+      DB_NAME: socialpub_test
+      DB_SSLMODE: disable
+      # DB-backed tests skip themselves without this.
+      TEST_DATABASE_URL: postgres://socialpub:socialpub@localhost:5432/socialpub_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
       - name: go vet
         run: go vet ./...
-      - name: go test
-        run: go test ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: build
+        run: go build ./...
+      - name: migrate
+        run: go run ./cmd/migrate up
+      - name: go test (with Postgres)
+        run: go test -count=1 ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # G104 (unchecked errors) is excluded: the remaining hits are
+      # best-effort cleanup (deferred Rollback/Close, last-used timestamps)
+      # and not a security property. Every other finding is fixed or carries
+      # an inline #nosec with its reason.
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -exclude=G104 ./...
 
   gitleaks:
     runs-on: ubuntu-latest

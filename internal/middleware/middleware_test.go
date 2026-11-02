@@ -990,7 +990,7 @@ func TestGetAPIKey_ValidContext(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRequireAuth_RejectsWeakTokens(t *testing.T) {
-	const secret = "jwt-hardening-test-secret-0123456789abcdef"
+	secret := strings.Repeat("j", 40) // test-only HMAC key
 	sub := "11111111-1111-1111-1111-111111111111"
 	sign := func(method jwt.SigningMethod, claims jwt.MapClaims, key any) string {
 		s, err := jwt.NewWithClaims(method, claims).SignedString(key)
@@ -1014,7 +1014,7 @@ func TestRequireAuth_RejectsWeakTokens(t *testing.T) {
 		{"missing exp", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub}, []byte(secret)), http.StatusUnauthorized},
 		{"expired", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": time.Now().Add(-time.Minute).Unix()}, []byte(secret)), http.StatusUnauthorized},
 		{"issued in the future", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future, "iat": future}, []byte(secret)), http.StatusUnauthorized},
-		{"wrong key", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future}, []byte("another-secret-of-sufficient-length-000")), http.StatusUnauthorized},
+		{"wrong key", sign(jwt.SigningMethodHS256, jwt.MapClaims{"sub": sub, "exp": future}, []byte(strings.Repeat("w", 40))), http.StatusUnauthorized},
 	}
 	h := RequireAuth(secret)(okHandler())
 	for _, tt := range tests {

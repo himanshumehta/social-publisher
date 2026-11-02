@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
@@ -98,7 +99,8 @@ func devConfig() *Config {
 	return cfg
 }
 
-const goodKey = "8f3b2c1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+// goodKey is a well-formed, non-repeating 32-byte test key (not a real secret).
+var goodKey = hex.EncodeToString([]byte("config-test-fixture-32-bytes-ok!"))
 
 func prodConfig() *Config {
 	return &Config{
