@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -66,6 +68,11 @@ type GenerateResult struct {
 	GeneratedAt time.Time                      `json:"generated_at"`
 }
 
+// ErrNoGenerationKey is returned when copy generation is needed but
+// CLAUDE_API_KEY is not configured. Posts that supply platform_posts never
+// reach the generator.
+var ErrNoGenerationKey = errors.New("CLAUDE_API_KEY is not set; supply platform_posts or configure a key")
+
 func (g *PostGenerator) Generate(ctx context.Context, req *GenerateRequest) (*GenerateResult, error) {
 	cacheKey := genCachePrefix + g.contentHash(req)
 	if cached, err := g.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
@@ -74,6 +81,10 @@ func (g *PostGenerator) Generate(ctx context.Context, req *GenerateRequest) (*Ge
 			g.logger.Info("post generator cache hit", "platforms", len(req.Platforms))
 			return &result, nil
 		}
+	}
+
+	if g.apiKey == "" {
+		return nil, ErrNoGenerationKey // fail fast instead of three doomed API calls
 	}
 
 	systemPrompt := g.buildSystemPrompt(req)
@@ -283,15 +294,9 @@ func (g *PostGenerator) callClaude(ctx context.Context, systemPrompt, userPrompt
 		return nil, fmt.Errorf("parsing platform posts JSON: %w", err)
 	}
 
-	for platform, post := range platformPosts {
-		post.Platform = platform
-		post.CharLimit = model.PlatformCharLimits[platform]
-		if post.CharCount == 0 {
-			post.CharCount = len(post.Text)
-			for _, tag := range post.Hashtags {
-				post.CharCount += len(tag) + 2
-			}
-		}
+	platformPosts, err = validateGenerated(platformPosts, platforms)
+	if err != nil {
+		return nil, err
 	}
 
 	return &GenerateResult{
@@ -339,4 +344,28 @@ func (g *PostGenerator) contentHash(req *GenerateRequest) string {
 	}
 	h.Write([]byte(req.Tone))
 	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// validateGenerated is the guardrail on model output. The model's JSON is
+// untrusted: keep only the platforms that were requested, require every one
+// of them with non-empty text, and recompute character counts from the text
+// itself (the model's own char_count is ignored, so the reviewer's length
+// check cannot be talked past). Length limits are enforced by PostReviewer,
+// which flags over-long posts before an admin sees them.
+func validateGenerated(posts map[string]*model.PlatformPost, requested []string) (map[string]*model.PlatformPost, error) {
+	out := make(map[string]*model.PlatformPost, len(requested))
+	for _, platform := range requested {
+		post, ok := posts[platform]
+		if !ok || post == nil || strings.TrimSpace(post.Text) == "" {
+			return nil, fmt.Errorf("model output has no text for %s", platform)
+		}
+		post.Platform = platform
+		post.CharLimit = model.PlatformCharLimits[platform]
+		post.CharCount = utf8.RuneCountInString(post.Text)
+		for _, tag := range post.Hashtags {
+			post.CharCount += utf8.RuneCountInString(tag) + 2 // "#tag" plus a separator
+		}
+		out[platform] = post
+	}
+	return out, nil
 }
