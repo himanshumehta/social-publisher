@@ -343,20 +343,11 @@ func (s *YouTubeUploadService) getChannelTokens(ctx context.Context, channelID u
 		return "", "", nil, fmt.Errorf("channel has no access token configured")
 	}
 
-	if tokenEncrypted && s.crypto != nil {
-		accessToken, err = s.crypto.Decrypt(encAccess)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
-		}
-		if encRefresh != "" {
-			refreshToken, err = s.crypto.Decrypt(encRefresh)
-			if err != nil {
-				return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
-			}
-		}
-	} else {
-		accessToken = encAccess
-		refreshToken = encRefresh
+	if accessToken, err = s.crypto.Open(encAccess, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
+	}
+	if refreshToken, err = s.crypto.Open(encRefresh, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
 	}
 
 	return accessToken, refreshToken, expiresAt, nil
@@ -404,20 +395,23 @@ func (s *YouTubeUploadService) refreshAccessToken(ctx context.Context, channelID
 	// Compute new expiry.
 	newExpiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-	// Encrypt the new access token if encryption is enabled.
-	storedToken := tokenResp.AccessToken
-	if s.crypto != nil {
-		encrypted, err := s.crypto.Encrypt(tokenResp.AccessToken)
-		if err != nil {
-			return "", fmt.Errorf("encrypt new access token: %w", err)
-		}
-		storedToken = encrypted
+	// Re-seal with the current key. The refresh token is re-sealed too, so a
+	// refresh also completes a key rotation for this channel and the
+	// token_encrypted flag stays true for both columns.
+	storedToken, encrypted, err := s.crypto.Seal(tokenResp.AccessToken)
+	if err != nil {
+		return "", fmt.Errorf("encrypt new access token: %w", err)
+	}
+	storedRefresh, _, err := s.crypto.Seal(refreshToken)
+	if err != nil {
+		return "", fmt.Errorf("encrypt refresh token: %w", err)
 	}
 
 	// Update the channel record.
 	_, err = s.pool.Exec(ctx,
-		`UPDATE channels SET access_token = $1, token_expires_at = $2, updated_at = NOW() WHERE id = $3`,
-		storedToken, newExpiry, channelID)
+		`UPDATE channels SET access_token = $1, refresh_token = NULLIF($2, ''), token_encrypted = $3,
+		        token_expires_at = $4, updated_at = NOW() WHERE id = $5`,
+		storedToken, storedRefresh, encrypted, newExpiry, channelID)
 	if err != nil {
 		slog.Error("failed to persist refreshed token",
 			"channel_id", channelID,

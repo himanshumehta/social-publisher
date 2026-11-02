@@ -638,20 +638,11 @@ func (s *LinkedInUploadService) getChannelTokens(ctx context.Context, channelID 
 		encRefreshStr = *encRefreshToken
 	}
 
-	if tokenEncrypted && s.crypto != nil {
-		accessToken, err = s.crypto.Decrypt(encAccessToken)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
-		}
-		if encRefreshStr != "" {
-			refreshToken, err = s.crypto.Decrypt(encRefreshStr)
-			if err != nil {
-				return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
-			}
-		}
-	} else {
-		accessToken = encAccessToken
-		refreshToken = encRefreshStr
+	if accessToken, err = s.crypto.Open(encAccessToken, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
+	}
+	if refreshToken, err = s.crypto.Open(encRefreshStr, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
 	}
 
 	return accessToken, refreshToken, metadata, nil

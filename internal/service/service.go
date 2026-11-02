@@ -38,8 +38,17 @@ type Services struct {
 	TokenCrypto *TokenCrypto
 }
 
-func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3Client) *Services {
-	tokenCrypto, _ := NewTokenCrypto(cfg.TokenEncKey) // nil in dev mode (no encryption)
+// New wires every service. It fails if the token encryption keys are invalid,
+// so a typo in TOKEN_ENCRYPTION_KEY stops start-up instead of silently storing
+// OAuth tokens in plaintext.
+func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3Client) (*Services, error) {
+	tokenCrypto, err := NewTokenCrypto(cfg.TokenEncKey, cfg.TokenEncKeysPrevious...)
+	if err != nil {
+		return nil, err
+	}
+	if !tokenCrypto.Enabled() {
+		slog.Warn("TOKEN_ENCRYPTION_KEY not set: OAuth tokens will be stored unencrypted (development only)")
+	}
 	quotaTracker := NewQuotaTracker(rdb)
 
 	// Per-platform video upload services.
@@ -83,5 +92,5 @@ func New(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, s3 *infra.S3
 		Calendar:      NewCalendarService(pool),
 		APIKey:        NewAPIKeyService(pool, logger),
 		TokenCrypto:   tokenCrypto,
-	}
+	}, nil
 }

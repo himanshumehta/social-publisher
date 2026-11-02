@@ -38,7 +38,11 @@ func main() {
 	// S3
 	hotS3 := infra.NewS3Client(cfg.S3)
 
-	svc := service.New(cfg, pool, rdb, hotS3)
+	svc, err := service.New(cfg, pool, rdb, hotS3)
+	if err != nil {
+		slog.Error("failed to initialise services", "error", err)
+		os.Exit(1)
+	}
 	ctx := context.Background()
 
 	// If a specific video ID is provided, process just that one

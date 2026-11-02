@@ -229,17 +229,13 @@ func randomString(nBytes int) (string, error) {
 
 // storeTokens encrypts and persists OAuth tokens for a channel.
 func (s *ChannelOAuthService) storeTokens(ctx context.Context, channelID uuid.UUID, provider, accessToken, refreshToken string, expiresAt time.Time) error {
-	encAccess, err := s.crypto.Encrypt(accessToken)
+	encAccess, encrypted, err := s.crypto.Seal(accessToken)
 	if err != nil {
 		return fmt.Errorf("encrypt access token: %w", err)
 	}
-
-	encRefresh := ""
-	if refreshToken != "" {
-		encRefresh, err = s.crypto.Encrypt(refreshToken)
-		if err != nil {
-			return fmt.Errorf("encrypt refresh token: %w", err)
-		}
+	encRefresh, _, err := s.crypto.Seal(refreshToken)
+	if err != nil {
+		return fmt.Errorf("encrypt refresh token: %w", err)
 	}
 
 	_, err = s.pool.Exec(ctx,
@@ -249,11 +245,11 @@ func (s *ChannelOAuthService) storeTokens(ctx context.Context, channelID uuid.UU
 			token_expires_at = $3,
 			oauth_provider = $4,
 			connection_status = 'connected',
-			token_encrypted = TRUE,
+			token_encrypted = $6,
 			last_token_refresh = NOW(),
 			updated_at = NOW()
 		WHERE id = $5`,
-		encAccess, strPtrOrNil(encRefresh), expiresAt, provider, channelID)
+		encAccess, strPtrOrNil(encRefresh), expiresAt, provider, channelID, encrypted)
 	if err != nil {
 		return fmt.Errorf("store tokens for channel %s: %w", channelID, err)
 	}
@@ -277,20 +273,11 @@ func (s *ChannelOAuthService) getDecryptedTokens(ctx context.Context, channelID 
 		return "", "", fmt.Errorf("query channel tokens: %w", err)
 	}
 
-	if !encrypted || encAccess == "" {
-		return encAccess, encRefresh, nil
-	}
-
-	accessToken, err = s.crypto.Decrypt(encAccess)
-	if err != nil {
+	if accessToken, err = s.crypto.Open(encAccess, encrypted); err != nil {
 		return "", "", fmt.Errorf("decrypt access token: %w", err)
 	}
-
-	if encRefresh != "" {
-		refreshToken, err = s.crypto.Decrypt(encRefresh)
-		if err != nil {
-			return "", "", fmt.Errorf("decrypt refresh token: %w", err)
-		}
+	if refreshToken, err = s.crypto.Open(encRefresh, encrypted); err != nil {
+		return "", "", fmt.Errorf("decrypt refresh token: %w", err)
 	}
 
 	return accessToken, refreshToken, nil

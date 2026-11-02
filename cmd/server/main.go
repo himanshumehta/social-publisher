@@ -46,7 +46,11 @@ func main() {
 	s3Client := infra.NewS3Client(cfg.S3)
 	slog.Info("s3 client initialized", "endpoint", cfg.S3.Endpoint, "bucket", cfg.S3.Bucket)
 
-	svc := service.New(cfg, pool, rdb, s3Client)
+	svc, err := service.New(cfg, pool, rdb, s3Client)
+	if err != nil {
+		slog.Error("failed to initialise services", "error", err)
+		os.Exit(1)
+	}
 
 	// Dev-only: bootstrap a local admin so the API can be used without signup/OAuth.
 	if cfg.IsDev() && cfg.DevAdmin.Email != "" && cfg.DevAdmin.Password != "" {

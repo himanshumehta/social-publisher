@@ -277,20 +277,11 @@ func (u *MetaContainerUploader) getChannelTokens(ctx context.Context, channelID 
 		encRefreshStr = *encRefreshToken
 	}
 
-	if tokenEncrypted && u.crypto != nil {
-		accessToken, err = u.crypto.Decrypt(encAccessToken)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
-		}
-		if encRefreshStr != "" {
-			refreshToken, err = u.crypto.Decrypt(encRefreshStr)
-			if err != nil {
-				return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
-			}
-		}
-	} else {
-		accessToken = encAccessToken
-		refreshToken = encRefreshStr
+	if accessToken, err = u.crypto.Open(encAccessToken, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt access token: %w", err)
+	}
+	if refreshToken, err = u.crypto.Open(encRefreshStr, tokenEncrypted); err != nil {
+		return "", "", nil, fmt.Errorf("decrypt refresh token: %w", err)
 	}
 
 	return accessToken, refreshToken, metadata, nil

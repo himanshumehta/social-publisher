@@ -28,6 +28,7 @@ type Channel struct {
 	ChannelID        string     `json:"channel_id,omitempty"`
 	ChannelURL       string     `json:"channel_url,omitempty"`
 	AccessToken      string     `json:"-"`
+	TokenEncrypted   bool       `json:"-"`
 	RefreshToken     string     `json:"-"`
 	TokenExpiresAt   *time.Time `json:"token_expires_at,omitempty"`
 	OAuthProvider    string     `json:"oauth_provider,omitempty"`

@@ -579,11 +579,9 @@ func (o *UploadOrchestrator) getChannelToken(ctx context.Context, channelID uuid
 		return "", nil, fmt.Errorf("channel has no access token")
 	}
 
-	if tokenEncrypted && o.tokenCrypto != nil {
-		accessToken, err = o.tokenCrypto.Decrypt(accessToken)
-		if err != nil {
-			return "", nil, fmt.Errorf("decrypt access token: %w", err)
-		}
+	accessToken, err = o.tokenCrypto.Open(accessToken, tokenEncrypted)
+	if err != nil {
+		return "", nil, fmt.Errorf("decrypt access token: %w", err)
 	}
 
 	return accessToken, metadata, nil

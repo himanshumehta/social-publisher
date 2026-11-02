@@ -294,14 +294,11 @@ func (s *TwitterUploadService) getChannelToken(ctx context.Context, channelID uu
 		return "", fmt.Errorf("channel %s has no access token configured", channelID)
 	}
 
-	if tokenEncrypted {
-		decrypted, err := s.crypto.Decrypt(accessToken)
-		if err != nil {
-			return "", fmt.Errorf("decrypt token: %w", err)
-		}
-		return decrypted, nil
+	decrypted, err := s.crypto.Open(accessToken, tokenEncrypted)
+	if err != nil {
+		return "", fmt.Errorf("decrypt token: %w", err)
 	}
-	return accessToken, nil
+	return decrypted, nil
 }
 
 // initializeUpload calls the Twitter v2 media INITIALIZE endpoint.

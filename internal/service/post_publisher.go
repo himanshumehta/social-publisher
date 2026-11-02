@@ -286,7 +286,7 @@ func (pp *PostPublisher) publishToPlatform(ctx context.Context, post *model.Post
 		}
 	}
 
-	accessToken, err := pp.tokenCrypto.Decrypt(channel.AccessToken)
+	accessToken, err := pp.tokenCrypto.Open(channel.AccessToken, channel.TokenEncrypted)
 	if err != nil {
 		result.Status = "failed"
 		result.Error = "failed to decrypt channel access token"
@@ -822,7 +822,7 @@ func (pp *PostPublisher) resolveChannels(ctx context.Context, post *model.Post) 
 
 	rows, err := pp.pool.Query(ctx, `
 		SELECT id, category_id, user_id, channel_type, platform, channel_name, channel_id,
-			access_token, connection_status, token_expires_at, metadata, scopes
+			access_token, COALESCE(token_encrypted, FALSE), connection_status, token_expires_at, metadata, scopes
 		FROM channels
 		WHERE platform = ANY($1)
 		  AND connection_status = 'connected'
@@ -842,7 +842,7 @@ func (pp *PostPublisher) resolveChannels(ctx context.Context, post *model.Post) 
 		var channelID, accessToken *string
 		err := rows.Scan(
 			&ch.ID, &ch.CategoryID, &ch.UserID, &ch.ChannelType, &ch.Platform, &ch.ChannelName,
-			&channelID, &accessToken, &ch.ConnectionStatus,
+			&channelID, &accessToken, &ch.TokenEncrypted, &ch.ConnectionStatus,
 			&ch.TokenExpiresAt, &ch.Metadata, &ch.Scopes,
 		)
 		if err != nil {

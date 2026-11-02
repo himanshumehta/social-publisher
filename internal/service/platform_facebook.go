@@ -608,11 +608,9 @@ func (s *FacebookUploadService) resolveChannel(ctx context.Context, channelID uu
 	}
 
 	// Decrypt if the token was stored encrypted.
-	if tokenEncrypted && s.crypto != nil {
-		accessToken, err = s.crypto.Decrypt(accessToken)
-		if err != nil {
-			return "", "", fmt.Errorf("decrypt token for channel %s: %w", channelID, err)
-		}
+	accessToken, err = s.crypto.Open(accessToken, tokenEncrypted)
+	if err != nil {
+		return "", "", fmt.Errorf("decrypt token for channel %s: %w", channelID, err)
 	}
 	if accessToken == "" {
 		return "", "", fmt.Errorf("channel %s has no access token", channelID)

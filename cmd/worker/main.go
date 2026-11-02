@@ -51,7 +51,11 @@ func main() {
 	hotS3 := infra.NewS3Client(cfg.S3)
 	slog.Info("s3 client initialized", "bucket", cfg.S3.Bucket)
 
-	svc := service.New(cfg, pool, rdb, hotS3)
+	svc, err := service.New(cfg, pool, rdb, hotS3)
+	if err != nil {
+		slog.Error("failed to initialise services", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

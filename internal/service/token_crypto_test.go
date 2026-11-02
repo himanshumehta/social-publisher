@@ -201,3 +201,66 @@ func TestEncrypt_ProducesDifferentCiphertext(t *testing.T) {
 		t.Error("both ciphertexts should decrypt to the original plaintext")
 	}
 }
+
+func TestTokenCrypto_KeyRotation(t *testing.T) {
+	oldKey, newKey := validHexKey(t), validHexKey(t)
+	before, _ := NewTokenCrypto(oldKey)
+	sealedWithOld, err := before.Encrypt("refresh-token-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// New key without the old one cannot read existing tokens...
+	onlyNew, _ := NewTokenCrypto(newKey)
+	if _, err := onlyNew.Decrypt(sealedWithOld); err == nil {
+		t.Fatal("decrypted with the wrong key")
+	}
+	// ...but with the old key listed as previous it can, and new writes use the new key.
+	rotated, err := NewTokenCrypto(newKey, oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := rotated.Decrypt(sealedWithOld); err != nil || got != "refresh-token-value" {
+		t.Fatalf("rotated Decrypt = %q, %v", got, err)
+	}
+	resealed, _ := rotated.Encrypt("refresh-token-value")
+	if _, err := before.Decrypt(resealed); err == nil {
+		t.Fatal("new ciphertext was sealed with the previous key")
+	}
+	if got, err := onlyNew.Decrypt(resealed); err != nil || got != "refresh-token-value" {
+		t.Fatalf("after rotation the previous key is no longer needed: %q, %v", got, err)
+	}
+}
+
+func TestNewTokenCrypto_RejectsBadPreviousKey(t *testing.T) {
+	if _, err := NewTokenCrypto(validHexKey(t), "not-hex"); err == nil {
+		t.Fatal("invalid previous key accepted")
+	}
+	if _, err := NewTokenCrypto("", validHexKey(t)); err == nil {
+		t.Fatal("previous key without a current key accepted")
+	}
+}
+
+func TestTokenCrypto_SealOpen(t *testing.T) {
+	tc, _ := NewTokenCrypto(validHexKey(t))
+	stored, encrypted, err := tc.Seal("access")
+	if err != nil || !encrypted || stored == "access" {
+		t.Fatalf("Seal = %q, %v, %v", stored, encrypted, err)
+	}
+	if got, err := tc.Open(stored, true); err != nil || got != "access" {
+		t.Fatalf("Open = %q, %v", got, err)
+	}
+	// Legacy plaintext rows (token_encrypted = false) are passed through.
+	if got, _ := tc.Open("plain", false); got != "plain" {
+		t.Fatalf("Open plaintext = %q", got)
+	}
+
+	var none *TokenCrypto
+	stored, encrypted, _ = none.Seal("access")
+	if encrypted || stored != "access" {
+		t.Fatal("without a key Seal must report encrypted=false so the flag stays truthful")
+	}
+	if _, err := none.Open("c2VhbGVk", true); err != ErrTokenKeyMissing {
+		t.Fatalf("Open of an encrypted value without a key: %v, want ErrTokenKeyMissing", err)
+	}
+}
