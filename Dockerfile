@@ -13,7 +13,7 @@ RUN for bin in server migrate worker thumbgen admin; do \
 
 # Stage 2: runtime. Alpine rather than distroless because thumbgen and the
 # thumbnail service shell out to ffmpeg; the image adds nothing else.
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates ffmpeg wget \
  && addgroup -S -g 10001 app \
  && adduser -S -D -H -u 10001 -G app app
