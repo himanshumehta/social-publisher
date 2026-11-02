@@ -69,7 +69,8 @@ send() {
 }
 
 echo "== publish.py --send (first)"
-FIRST=$(send); echo "$FIRST"
+FIRST=$(send) || { echo "$FIRST"; tail -3 "$WORK/server.log" >&2; exit 1; }
+echo "$FIRST"
 POST_ID=$(echo "$FIRST" | sed -n 's/.*post_id=\([0-9a-f-]*\).*/\1/p')
 [ -n "$POST_ID" ] || { echo "no post_id in publish.py output" >&2; exit 1; }
 
@@ -92,7 +93,8 @@ echo "status after approval: $S"
 grep -o 'would publish [a-z]* '"$POST_ID"'[^"]*' "$WORK/worker.log" | sort -u
 
 echo "== publish.py --send (replay)"
-SECOND=$(send); echo "$SECOND"
+SECOND=$(send) || { echo "$SECOND"; tail -3 "$WORK/server.log" >&2; exit 1; }
+echo "$SECOND"
 echo "$SECOND" | grep -q "post_id=$POST_ID .*replayed" || { echo "replay did not return the same post" >&2; exit 1; }
 TOTAL=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/admin/posts?author_id=$OWNER_ID" | json 'd["total"]')
 echo "posts owned by the API key: $TOTAL"
