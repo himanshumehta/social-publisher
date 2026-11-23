@@ -1,5 +1,5 @@
 # Stage 1: build all Go binaries (static, no cgo)
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS go-builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
